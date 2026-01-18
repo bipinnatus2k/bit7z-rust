@@ -1,0 +1,24 @@
+[package]
+name = "bit7z-rust"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "A Rust wrapper for 7-Zip shared libraries"
+license = "MPL-2.0"
+repository = "https://github.com/your-username/bit7z-rust"
+keywords = ["archive", "compression", "p7zip", "zip", "extract"]
+categories = ["compression", "api-bindings"]
+
+[dependencies]
+libloading = "0.8"
+thiserror = "1.0"
+widestring = "1.0"
+uuid = "1.0"
+chrono = "0.4"
+rayon = "1.8"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.52", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
+
+[dev-dependencies]
+tempfile = "3.8"
