@@ -29,8 +29,8 @@ pub struct ISequentialInStreamVTable {
     pub read: unsafe extern "system" fn(
         this: *mut ISequentialInStream,
         data: *mut c_void,
-        size: usize,
-        processed_size: *mut usize,
+        size: u32,  // 7-Zip uses UInt32, not usize
+        processed_size: *mut u32,  // 7-Zip uses UInt32*, not usize*
     ) -> HRESULT,
 }
 
@@ -46,8 +46,8 @@ pub struct ISequentialOutStreamVTable {
     pub write: unsafe extern "system" fn(
         this: *mut ISequentialOutStream,
         data: *const c_void,
-        size: usize,
-        processed_size: *mut usize,
+        size: u32,  // 7-Zip uses UInt32, not usize
+        processed_size: *mut u32,  // 7-Zip uses UInt32*, not usize*
     ) -> HRESULT,
 }
 
@@ -65,6 +65,17 @@ pub struct IInStreamVTable {
         offset: i64,
         seek_origin: u32,
         new_position: *mut u64,
+    ) -> HRESULT,
+}
+
+// IInStreamGetSizeVTable - extends IUnknown for getting stream size
+// This is a separate vtable that can be queried via QueryInterface
+#[repr(C)]
+pub struct IStreamGetSizeVTable {
+    pub base: IUnknownVTable,
+    pub get_size: unsafe extern "system" fn(
+        this: *mut IStreamGetSize,
+        size: *mut u64,
     ) -> HRESULT,
 }
 
@@ -101,7 +112,7 @@ pub struct IInArchiveVTable {
     pub open: unsafe extern "system" fn(
         this: *mut IInArchive,
         stream: *mut IInStream,
-        max_check_start_position: u64,
+        max_check_start_position: *const u64,  // Fixed: should be a pointer
         open_callback: *mut IArchiveOpenCallback,
     ) -> HRESULT,
     pub close: unsafe extern "system" fn(this: *mut IInArchive) -> HRESULT,
@@ -188,18 +199,46 @@ pub struct IArchiveOpenCallback {
     pub vtable: *const IArchiveOpenCallbackVTable,
 }
 
-// IArchiveExtractCallback
+// IArchiveOpenVolumeCallback - for multi-volume archives
+#[repr(C)]
+pub struct IArchiveOpenVolumeCallbackVTable {
+    pub base: IUnknownVTable,
+    pub get_property: unsafe extern "system" fn(
+        this: *mut IArchiveOpenVolumeCallback,
+        prop_id: u32,
+        value: *mut PROPVARIANT,
+    ) -> HRESULT,
+    pub get_stream: unsafe extern "system" fn(
+        this: *mut IArchiveOpenVolumeCallback,
+        name: *const u16,
+        in_stream: *mut *mut IInStream,
+    ) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct IArchiveOpenVolumeCallback {
+    pub vtable: *const IArchiveOpenVolumeCallbackVTable,
+}
+
+// IArchiveOpenSetSubArchiveName
+#[repr(C)]
+pub struct IArchiveOpenSetSubArchiveNameVTable {
+    pub base: IUnknownVTable,
+    pub set_sub_archive_name: unsafe extern "system" fn(
+        this: *mut IArchiveOpenSetSubArchiveName,
+        name: *const u16,
+    ) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct IArchiveOpenSetSubArchiveName {
+    pub vtable: *const IArchiveOpenSetSubArchiveNameVTable,
+}
+
+// IArchiveExtractCallback - inherits from IProgress
 #[repr(C)]
 pub struct IArchiveExtractCallbackVTable {
-    pub base: IUnknownVTable,
-    pub set_completed: unsafe extern "system" fn(
-        this: *mut IArchiveExtractCallback,
-        complete_value: *const u64,
-    ) -> HRESULT,
-    pub set_total: unsafe extern "system" fn(
-        this: *mut IArchiveExtractCallback,
-        total: u64,
-    ) -> HRESULT,
+    pub base: IProgressVTable,
     pub get_stream: unsafe extern "system" fn(
         this: *mut IArchiveExtractCallback,
         index: u32,
@@ -300,3 +339,29 @@ pub struct ICryptoGetTextPassword {
 pub const SEEK_SET: u32 = 0;
 pub const SEEK_CUR: u32 = 1;
 pub const SEEK_END: u32 = 2;
+
+// IStreamGetSize interface - for getting stream size
+// Note: IStreamGetSizeVTable is defined above with IInStream
+#[repr(C)]
+pub struct IStreamGetSize {
+    pub vtable: *const IStreamGetSizeVTable,
+}
+
+// IStreamGetProps interface - for getting stream properties
+#[repr(C)]
+pub struct IStreamGetPropsVTable {
+    pub base: IUnknownVTable,
+    pub get_props: unsafe extern "system" fn(
+        this: *mut IStreamGetProps,
+        size: *mut u64,
+        c_time: *mut c_void,
+        a_time: *mut c_void,
+        m_time: *mut c_void,
+        attrib: *mut u32,
+    ) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct IStreamGetProps {
+    pub vtable: *const IStreamGetPropsVTable,
+}

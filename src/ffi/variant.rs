@@ -250,11 +250,18 @@ impl Default for PROPVARIANT {
 impl PROPVARIANT {
     /// Clear the variant
     pub unsafe fn clear(&mut self) {
-        // For simplicity, we just reset to empty
+        // Note: On Linux with 7-Zip (p7zip), PROPVARIANT string pointers
+        // are managed by the 7-Zip library and should not be freed by us.
+        // We simply reset the variant to empty state.
+        
+        // Reset to empty
         self.vt = VARENUM::VT_EMPTY as u16;
+        self.wReserved1 = 0;
+        self.wReserved2 = 0;
+        self.wReserved3 = 0;
         self.data = [0; 16];
     }
-    
+
     /// Check if the variant is empty
     pub fn is_empty(&self) -> bool {
         self.vt == VARENUM::VT_EMPTY as u16
@@ -264,7 +271,7 @@ impl PROPVARIANT {
 /// Convert PROPVARIANT to String
 pub unsafe fn propvariant_to_string(prop: &PROPVARIANT) -> Result<String> {
     let vt = prop.vt as u32;
-    
+
     if vt == VARENUM::VT_LPSTR as u32 {
         // LPSTR (ANSI string)
         let ptr = *(prop.data.as_ptr() as *const *const i8);
@@ -275,16 +282,47 @@ pub unsafe fn propvariant_to_string(prop: &PROPVARIANT) -> Result<String> {
         Ok(cstr.to_string_lossy().to_string())
     } else if vt == VARENUM::VT_BSTR as u32 {
         // BSTR (BSTR string)
+        // BSTR layout: [4-byte byte-length][string data...][null terminator]
+        // The BSTR pointer points to the string data
         let ptr = *(prop.data.as_ptr() as *const *const u16);
         if ptr.is_null() {
             return Ok(String::new());
         }
-        // Find length (BSTR has length prefix at -4 bytes)
-        let len = *(ptr.offset(-1) as *const u32) as usize;
-        let slice = std::slice::from_raw_parts(ptr, len);
-        String::from_utf16(slice).map_err(|e| {
-            Bit7zError::ExtractFailed(format!("Invalid UTF-16 string: {}", e))
-        })
+        // Read byte length from 4 bytes before the BSTR pointer
+        let byte_len_ptr = (ptr as *const u8).offset(-4) as *const u32;
+        let byte_len = std::ptr::read_unaligned(byte_len_ptr) as usize;
+        
+        // On Linux, 7-Zip uses wchar_t (4 bytes, UTF-32), not UTF-16
+        // We need to determine the character size from the byte length
+        // Try to detect: if byte_len is divisible by 4 and not by 2, it's UTF-32
+        // Otherwise, check the content to determine encoding
+        
+        let char_data = std::slice::from_raw_parts(ptr as *const u8, byte_len);
+        
+        // Try UTF-32 first (Linux 7-Zip)
+        if byte_len % 4 == 0 && byte_len > 0 {
+            let u32_chars = byte_len / 4;
+            let u32_slice = std::slice::from_raw_parts(ptr as *const u32, u32_chars);
+            // Convert UTF-32 to String
+            let mut result = String::with_capacity(u32_chars);
+            for &code_point in u32_slice {
+                if code_point == 0 {
+                    break;
+                }
+                // Convert code point to char, handling invalid code points
+                if let Some(ch) = char::from_u32(code_point) {
+                    result.push(ch);
+                }
+            }
+            if !result.is_empty() {
+                return Ok(result);
+            }
+        }
+        
+        // Fall back to UTF-16 (Windows 7-Zip or pure ASCII)
+        let char_len = byte_len / 2;
+        let u16_slice = std::slice::from_raw_parts(ptr, char_len);
+        Ok(String::from_utf16_lossy(u16_slice))
     } else if vt == VARENUM::VT_LPWSTR as u32 {
         // LPWSTR (Unicode string)
         let ptr = *(prop.data.as_ptr() as *const *const u16);
@@ -297,9 +335,8 @@ pub unsafe fn propvariant_to_string(prop: &PROPVARIANT) -> Result<String> {
             len += 1;
         }
         let slice = std::slice::from_raw_parts(ptr, len);
-        String::from_utf16(slice).map_err(|e| {
-            Bit7zError::ExtractFailed(format!("Invalid UTF-16 string: {}", e))
-        })
+        // Use lossy conversion to handle invalid UTF-16 (e.g., lone surrogates)
+        Ok(String::from_utf16_lossy(slice))
     } else {
         Ok(String::new())
     }
@@ -361,5 +398,81 @@ pub unsafe fn propvariant_to_bool(prop: &PROPVARIANT) -> bool {
         propvariant_to_u32(prop) != 0
     } else {
         false
+    }
+}
+
+/// Convert PROPVARIANT to FILETIME (Option<SystemTime>)
+pub unsafe fn propvariant_to_filetime(prop: &PROPVARIANT) -> Result<Option<std::time::SystemTime>> {
+    let vt = prop.vt as u32;
+    
+    if vt == VARENUM::VT_FILETIME as u32 {
+        let filetime = propvariant_to_u64(prop);
+        const FILETIME_UNIX_DIFF: u64 = 116444736000000000;
+        
+        if filetime < FILETIME_UNIX_DIFF {
+            return Ok(None);
+        }
+        
+        let unix_time = filetime - FILETIME_UNIX_DIFF;
+        let duration = std::time::Duration::from_nanos(unix_time * 100);
+        
+        Ok(Some(std::time::UNIX_EPOCH.checked_add(duration).unwrap()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Convert PROPVARIANT to i64
+pub unsafe fn propvariant_to_i64(prop: &PROPVARIANT) -> i64 {
+    let vt = prop.vt as u32;
+
+    if vt == VARENUM::VT_I8 as u32 {
+        i64::from_le_bytes([
+            prop.data[0], prop.data[1], prop.data[2], prop.data[3],
+            prop.data[4], prop.data[5], prop.data[6], prop.data[7]
+        ])
+    } else if vt == VARENUM::VT_I4 as u32 {
+        propvariant_to_u32(prop) as i64
+    } else if vt == VARENUM::VT_UI8 as u32 {
+        propvariant_to_u64(prop) as i64
+    } else {
+        0
+    }
+}
+
+/// Allocate a BSTR from a UTF-16 slice (without null terminator)
+/// BSTR layout: [4-byte byte-length][string data][null terminator]
+pub fn alloc_bstr(s: &[u16]) -> *mut u16 {
+    use std::alloc::{alloc, Layout};
+    
+    if s.is_empty() {
+        return std::ptr::null_mut();
+    }
+    
+    let byte_len = s.len() * 2;
+    
+    // Allocate memory: 4 bytes for length + string data + 2 bytes for null terminator
+    let total_size = 4 + byte_len + 2;
+    let layout = Layout::from_size_align(total_size, 4).unwrap();
+    
+    unsafe {
+        let ptr = alloc(layout);
+        if ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        
+        // Write byte length (4 bytes before string data)
+        let len_ptr = ptr as *mut u32;
+        *len_ptr = byte_len as u32;
+        
+        // Copy string data
+        let str_ptr = ptr.add(4);
+        std::ptr::copy_nonoverlapping(s.as_ptr(), str_ptr as *mut u16, s.len());
+        
+        // Write null terminator
+        *(str_ptr.add(s.len()) as *mut u16) = 0;
+        
+        // Return pointer to string data (after length prefix)
+        str_ptr as *mut u16
     }
 }

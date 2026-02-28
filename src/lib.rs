@@ -22,13 +22,15 @@
 //!     Ok(())
 //! }
 //! ```
-
 pub mod ffi;
 pub mod format;
 pub mod error;
 pub mod stream;
 pub mod compressor;
 pub mod extractor;
+pub mod archive_reader;
+pub mod progress;
+pub mod archive_writer;
 
 pub use ffi::BitLibrary;
 pub use ffi::LibraryError;
@@ -46,6 +48,7 @@ pub use format::{
 pub use error::{Bit7zError, Result};
 pub use compressor::BitCompressor;
 pub use extractor::BitExtractor;
+pub use archive_reader::{BitArchiveReader, ArchiveItem, ArchiveProperties};
 
 #[cfg(test)]
 mod tests {

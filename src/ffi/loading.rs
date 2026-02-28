@@ -49,34 +49,40 @@ pub enum LibraryError {
 }
 
 /// Wrapper for 7-Zip shared library
-pub struct BitLibrary<'a> {
-    _library: Library,
-    create_object: Symbol<'a, CreateObjectFunc>,
+pub struct BitLibrary {
+    _library: Box<Library>,
+    create_object: Symbol<'static, CreateObjectFunc>,
 }
 
-impl<'a> BitLibrary<'a> {
+impl BitLibrary {
     /// Load 7-Zip library from specified path or default location
     pub fn new<P: AsRef<Path>>(path: Option<P>) -> Result<Self, LibraryError> {
         let lib_path = path
             .map(|p| p.as_ref().to_path_buf())
             .unwrap_or_else(|| Path::new(DEFAULT_LIBRARY).to_path_buf());
-        
-        let library = unsafe { Library::new(&lib_path)? };
-        
+
+        let library = Box::new(unsafe { Library::new(&lib_path)? });
+
         let create_object = unsafe {
-            library.get(b"CreateObject\0")
+            library.get::<CreateObjectFunc>(b"CreateObject\0")
                 .map_err(|_| LibraryError::SymbolNotFound("CreateObject".into()))?
+        };
+
+        // Safety: We transmute the symbol to 'static lifetime. This is safe because
+        // the symbol is tied to the library's lifetime, and we store the library
+        // in the same struct, ensuring the symbol cannot outlive the library.
+        let create_object_static = unsafe {
+            std::mem::transmute::<Symbol<'_, CreateObjectFunc>, Symbol<'static, CreateObjectFunc>>(create_object)
         };
 
         Ok(BitLibrary {
             _library: library,
-            create_object,
+            create_object: create_object_static,
         })
     }
     
     /// Enable large page mode (if supported by library)
     pub fn set_large_page_mode(&self) -> Result<(), LibraryError> {
-        // This is optional, so we ignore if function doesn't exist
         if let Ok(set_large_page_mode) = unsafe {
             self._library.get::<SetLargePageModeFunc>(b"SetLargePageMode\0")
         } {
