@@ -342,6 +342,43 @@ pub struct ICryptoGetTextPassword2 {
     pub vtable: *const ICryptoGetTextPassword2VTable,
 }
 
+// ICompressProgressInfo - for progress reporting
+#[repr(C)]
+pub struct ICompressProgressInfoVTable {
+    pub base: IUnknownVTable,
+    pub set_ratio_info: unsafe extern "system" fn(
+        this: *mut ICompressProgressInfo,
+        in_size: *const u64,
+        out_size: *const u64,
+    ) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct ICompressProgressInfo {
+    pub vtable: *const ICompressProgressInfoVTable,
+}
+
+// IArchiveUpdateCallback2 - extends IArchiveUpdateCallback
+#[repr(C)]
+pub struct IArchiveUpdateCallback2VTable {
+    pub base: IArchiveUpdateCallbackVTable,
+    pub get_volume_size: unsafe extern "system" fn(
+        this: *mut IArchiveUpdateCallback2,
+        index: u32,
+        size: *mut u64,
+    ) -> HRESULT,
+    pub get_volume_stream: unsafe extern "system" fn(
+        this: *mut IArchiveUpdateCallback2,
+        index: u32,
+        volume_stream: *mut *mut ISequentialOutStream,
+    ) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct IArchiveUpdateCallback2 {
+    pub vtable: *const IArchiveUpdateCallback2VTable,
+}
+
 // Seek origin constants
 pub const SEEK_SET: u32 = 0;
 pub const SEEK_CUR: u32 = 1;

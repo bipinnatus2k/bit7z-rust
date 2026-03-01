@@ -7,7 +7,7 @@ use crate::ffi::{
     IID_IUnknown, IID_IArchiveOpenCallback, IID_IArchiveOpenVolumeCallback,
     IID_IArchiveOpenSetSubArchiveName, IID_ICryptoGetTextPassword,
 };
-use crate::ffi::variant::alloc_bstr_utf32;
+use crate::ffi::variant::alloc_bstr_from_utf32;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -165,8 +165,8 @@ impl OpenCallback {
             // Convert to UTF-32
             let utf32: Vec<u32> = file_name.chars().map(|c| c as u32).collect();
 
-            // Allocate BSTR (UTF-32 version)
-            let bstr = alloc_bstr_utf32(&utf32);
+            // Allocate BSTR (UTF-16 version for cross-platform compatibility)
+            let bstr = alloc_bstr_from_utf32(&file_name);
             if bstr.is_null() {
                 return -2147467259; // E_FAIL
             }

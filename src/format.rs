@@ -207,6 +207,11 @@ impl CompressionMethod {
             CompressionMethod::Bcj2 => "BCJ2",
         }
     }
+    
+    /// Get the 7-Zip method name as String
+    pub fn to_string(&self) -> String {
+        self.to_id().to_string()
+    }
 }
 
 /// Format features

@@ -1,24 +1,38 @@
 //! Compression callback implementations for 7-Zip archive creation
 //!
 //! This module provides UpdateCallback for handling compression operations.
+//! 
+//! ## Interface Layout
+//! 
+//! To match C++ multiple inheritance vtable layout, we use separate wrapper
+//! structs for each interface. Each wrapper has its own vtable pointer at offset 0.
+//!
+//! UpdateCallback (main object)
+//! ├── IUnknown vtable (indices 0-2)
+//! ├── IProgress vtable (indices 0-2) <- shares IUnknown methods
+//! ├── IArchiveUpdateCallback vtable (indices 0-6) <- inherits IProgress
+//! └── ICryptoGetTextPassword vtable (indices 0-2)
+//! └── ICryptoGetTextPassword2 vtable (indices 0-2)
 
 use crate::ffi::{
     IArchiveUpdateCallback, IArchiveUpdateCallbackVTable,
-    ISequentialInStream, IUnknown, IUnknownVTable,
+    ISequentialInStream, ISequentialOutStream, IUnknown, IUnknownVTable,
     ICryptoGetTextPassword, ICryptoGetTextPasswordVTable,
     ICryptoGetTextPassword2, ICryptoGetTextPassword2VTable,
     IProgress, IProgressVTable,
+    ICompressProgressInfo, ICompressProgressInfoVTable,
+    IArchiveUpdateCallback2, IArchiveUpdateCallback2VTable,
     PROPVARIANT, PROPID, HRESULT, ULONG,
     IID_IUnknown, IID_IArchiveUpdateCallback, IID_ICryptoGetTextPassword,
-    IID_ICryptoGetTextPassword2,
+    IID_ICryptoGetTextPassword2, IID_IProgress,
+    IID_IArchiveUpdateCallback2, IID_ICompressProgressInfo,
 };
-use crate::ffi::variant::alloc_bstr_utf32;
+use crate::ffi::variant::alloc_bstr_from_utf32;
 use crate::error::Result;
 use crate::stream::FileStream;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::ptr;
 
 /// Input item representing a file to be compressed
@@ -44,74 +58,215 @@ impl InputItem {
     }
 }
 
-/// Callback for archive update operations
-/// Uses a single vtable containing all interface methods
+/// Main callback object containing all data
+/// This is the "master" object that owns all the data
 #[repr(C)]
 pub struct UpdateCallback {
-    base_vtable: *const c_void,
+    // IUnknown vtable - must be first for IUnknown casts
+    unknown_vtable: *const IUnknownVTable,
+    // IProgress vtable - for IProgress casts
+    progress_vtable: *const IProgressVTable,
+    // IArchiveUpdateCallback vtable - for IArchiveUpdateCallback casts
+    update_callback_vtable: *const IArchiveUpdateCallbackVTable,
+    // IArchiveUpdateCallback2 vtable
+    update_callback2_vtable: *const IArchiveUpdateCallback2VTable,
+    // ICompressProgressInfo vtable
+    compress_progress_vtable: *const ICompressProgressInfoVTable,
+    // ICryptoGetTextPassword vtable
+    crypto_password_vtable: *const ICryptoGetTextPasswordVTable,
+    // ICryptoGetTextPassword2 vtable
+    crypto_password2_vtable: *const ICryptoGetTextPassword2VTable,
+    // Data fields
     input_items: Vec<InputItem>,
     ref_count: UnsafeCell<u32>,
     password: Option<String>,
 }
 
-// Unified vtable structure containing all interface methods
-struct UpdateCallbackVTable {
-    // IUnknown
-    query_interface: unsafe extern "system" fn(*mut IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
-    add_ref: unsafe extern "system" fn(*mut IUnknown) -> ULONG,
-    release: unsafe extern "system" fn(*mut IUnknown) -> ULONG,
-    // IProgress (base of IArchiveUpdateCallback)
-    set_completed: unsafe extern "system" fn(*mut IProgress, *const u64) -> HRESULT,
-    set_total: unsafe extern "system" fn(*mut IProgress, u64) -> HRESULT,
-    // IArchiveUpdateCallback
-    get_update_item_info: unsafe extern "system" fn(
-        *mut IArchiveUpdateCallback,
-        u32,
-        *mut i32,
-        *mut i32,
-        *mut u32,
-    ) -> HRESULT,
-    get_property: unsafe extern "system" fn(*mut IArchiveUpdateCallback, u32, PROPID, *mut PROPVARIANT) -> HRESULT,
-    get_stream: unsafe extern "system" fn(*mut IArchiveUpdateCallback, u32, *mut *mut ISequentialInStream) -> HRESULT,
-    set_operation_result: unsafe extern "system" fn(*mut IArchiveUpdateCallback, i32) -> HRESULT,
-    // ICryptoGetTextPassword
-    get_text_password: unsafe extern "system" fn(*mut ICryptoGetTextPassword, *mut *mut u16) -> HRESULT,
-    // ICryptoGetTextPassword2
-    get_text_password2: unsafe extern "system" fn(*mut ICryptoGetTextPassword2, *mut i32, *mut *mut u16) -> HRESULT,
-}
+// Static vtables - initialized once
+static mut UNKNOWN_VTABLE: Option<IUnknownVTable> = None;
+static mut PROGRESS_VTABLE: Option<IProgressVTable> = None;
+static mut UPDATE_CALLBACK_VTABLE: Option<IArchiveUpdateCallbackVTable> = None;
+static mut UPDATE_CALLBACK2_VTABLE: Option<IArchiveUpdateCallback2VTable> = None;
+static mut COMPRESS_PROGRESS_VTABLE: Option<ICompressProgressInfoVTable> = None;
+static mut CRYPTO_PASSWORD_VTABLE: Option<ICryptoGetTextPasswordVTable> = None;
+static mut CRYPTO_PASSWORD2_VTABLE: Option<ICryptoGetTextPassword2VTable> = None;
 
-static mut UPDATE_CALLBACK_VTABLE: Option<UpdateCallbackVTable> = None;
-
-fn init_vtable() -> *const UpdateCallbackVTable {
+/// Initialize all vtables
+fn init_vtables() {
     unsafe {
-        if UPDATE_CALLBACK_VTABLE.is_none() {
-            UPDATE_CALLBACK_VTABLE = Some(UpdateCallbackVTable {
-                query_interface: UpdateCallback::query_interface,
-                add_ref: UpdateCallback::add_ref,
-                release: UpdateCallback::release,
+        if UNKNOWN_VTABLE.is_none() {
+            UNKNOWN_VTABLE = Some(IUnknownVTable {
+                query_interface: UpdateCallback::unknown_query_interface,
+                add_ref: UpdateCallback::unknown_add_ref,
+                release: UpdateCallback::unknown_release,
+            });
+            
+            PROGRESS_VTABLE = Some(IProgressVTable {
+                base: IUnknownVTable {
+                    query_interface: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut IProgress, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                        unsafe extern "system" fn(*mut IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    >(UpdateCallback::progress_query_interface),
+                    add_ref: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut IProgress) -> ULONG,
+                        unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                    >(UpdateCallback::progress_add_ref),
+                    release: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut IProgress) -> ULONG,
+                        unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                    >(UpdateCallback::progress_release),
+                },
                 set_completed: UpdateCallback::set_completed,
                 set_total: UpdateCallback::set_total,
+            });
+            
+            UPDATE_CALLBACK_VTABLE = Some(IArchiveUpdateCallbackVTable {
+                base: IProgressVTable {
+                    base: IUnknownVTable {
+                        query_interface: std::mem::transmute::<
+                            unsafe extern "system" fn(*mut IArchiveUpdateCallback, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                            unsafe extern "system" fn(*mut IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                        >(UpdateCallback::update_callback_query_interface),
+                        add_ref: std::mem::transmute::<
+                            unsafe extern "system" fn(*mut IArchiveUpdateCallback) -> ULONG,
+                            unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                        >(UpdateCallback::update_callback_add_ref),
+                        release: std::mem::transmute::<
+                            unsafe extern "system" fn(*mut IArchiveUpdateCallback) -> ULONG,
+                            unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                        >(UpdateCallback::update_callback_release),
+                    },
+                    set_completed: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut IArchiveUpdateCallback, *const u64) -> HRESULT,
+                        unsafe extern "system" fn(*mut IProgress, *const u64) -> HRESULT,
+                    >(UpdateCallback::set_completed_impl),
+                    set_total: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut IArchiveUpdateCallback, u64) -> HRESULT,
+                        unsafe extern "system" fn(*mut IProgress, u64) -> HRESULT,
+                    >(UpdateCallback::set_total_impl),
+                },
                 get_update_item_info: UpdateCallback::get_update_item_info,
                 get_property: UpdateCallback::get_property,
                 get_stream: UpdateCallback::get_stream,
                 set_operation_result: UpdateCallback::set_operation_result,
-                get_text_password: UpdateCallback::get_text_password,
-                get_text_password2: UpdateCallback::get_text_password2,
+            });
+            
+            UPDATE_CALLBACK2_VTABLE = Some(IArchiveUpdateCallback2VTable {
+                base: IArchiveUpdateCallbackVTable {
+                    base: IProgressVTable {
+                        base: IUnknownVTable {
+                            query_interface: std::mem::transmute::<
+                                unsafe extern "system" fn(*mut IArchiveUpdateCallback2, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                                unsafe extern "system" fn(*mut IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                            >(UpdateCallback::update_callback2_query_interface),
+                            add_ref: std::mem::transmute::<
+                                unsafe extern "system" fn(*mut IArchiveUpdateCallback2) -> ULONG,
+                                unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                            >(UpdateCallback::update_callback2_add_ref),
+                            release: std::mem::transmute::<
+                                unsafe extern "system" fn(*mut IArchiveUpdateCallback2) -> ULONG,
+                                unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                            >(UpdateCallback::update_callback2_release),
+                        },
+                        set_completed: std::mem::transmute::<
+                            unsafe extern "system" fn(*mut IArchiveUpdateCallback2, *const u64) -> HRESULT,
+                            unsafe extern "system" fn(*mut IProgress, *const u64) -> HRESULT,
+                        >(UpdateCallback::set_completed_impl2),
+                        set_total: std::mem::transmute::<
+                            unsafe extern "system" fn(*mut IArchiveUpdateCallback2, u64) -> HRESULT,
+                            unsafe extern "system" fn(*mut IProgress, u64) -> HRESULT,
+                        >(UpdateCallback::set_total_impl2),
+                    },
+                    get_update_item_info: UpdateCallback::get_update_item_info,
+                    get_property: UpdateCallback::get_property,
+                    get_stream: UpdateCallback::get_stream,
+                    set_operation_result: UpdateCallback::set_operation_result,
+                },
+                get_volume_size: UpdateCallback::get_volume_size,
+                get_volume_stream: UpdateCallback::get_volume_stream,
+            });
+            
+            COMPRESS_PROGRESS_VTABLE = Some(ICompressProgressInfoVTable {
+                base: IUnknownVTable {
+                    query_interface: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICompressProgressInfo, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                        unsafe extern "system" fn(*mut IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    >(UpdateCallback::compress_progress_query_interface),
+                    add_ref: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICompressProgressInfo) -> ULONG,
+                        unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                    >(UpdateCallback::compress_progress_add_ref),
+                    release: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICompressProgressInfo) -> ULONG,
+                        unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                    >(UpdateCallback::compress_progress_release),
+                },
+                set_ratio_info: UpdateCallback::set_ratio_info,
+            });
+            
+            CRYPTO_PASSWORD_VTABLE = Some(ICryptoGetTextPasswordVTable {
+                base: IUnknownVTable {
+                    query_interface: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICryptoGetTextPassword, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                        unsafe extern "system" fn(*mut IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    >(UpdateCallback::crypto_password_query_interface),
+                    add_ref: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICryptoGetTextPassword) -> ULONG,
+                        unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                    >(UpdateCallback::crypto_password_add_ref),
+                    release: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICryptoGetTextPassword) -> ULONG,
+                        unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                    >(UpdateCallback::crypto_password_release),
+                },
+                crypto_get_text_password: UpdateCallback::get_text_password,
+            });
+            
+            CRYPTO_PASSWORD2_VTABLE = Some(ICryptoGetTextPassword2VTable {
+                base: IUnknownVTable {
+                    query_interface: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICryptoGetTextPassword2, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                        unsafe extern "system" fn(*mut IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    >(UpdateCallback::crypto_password2_query_interface),
+                    add_ref: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICryptoGetTextPassword2) -> ULONG,
+                        unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                    >(UpdateCallback::crypto_password2_add_ref),
+                    release: std::mem::transmute::<
+                        unsafe extern "system" fn(*mut ICryptoGetTextPassword2) -> ULONG,
+                        unsafe extern "system" fn(*mut IUnknown) -> ULONG,
+                    >(UpdateCallback::crypto_password2_release),
+                },
+                crypto_get_text_password2: UpdateCallback::get_text_password2,
             });
         }
-        UPDATE_CALLBACK_VTABLE.as_ref().unwrap() as *const _
     }
 }
 
 impl UpdateCallback {
     /// Create a new UpdateCallback with input items
     pub fn new(input_items: Vec<InputItem>, password: Option<String>) -> Self {
-        UpdateCallback {
-            base_vtable: init_vtable() as *const c_void,
-            input_items,
-            ref_count: UnsafeCell::new(1),
-            password,
+        init_vtables();
+        
+        unsafe {
+            UpdateCallback {
+                unknown_vtable: UNKNOWN_VTABLE.as_ref().unwrap() as *const _,
+                progress_vtable: PROGRESS_VTABLE.as_ref().unwrap() as *const _,
+                update_callback_vtable: UPDATE_CALLBACK_VTABLE.as_ref().unwrap() as *const _,
+                update_callback2_vtable: UPDATE_CALLBACK2_VTABLE.as_ref().unwrap() as *const _,
+                compress_progress_vtable: COMPRESS_PROGRESS_VTABLE.as_ref().unwrap() as *const _,
+                crypto_password_vtable: CRYPTO_PASSWORD_VTABLE.as_ref().unwrap() as *const _,
+                crypto_password2_vtable: CRYPTO_PASSWORD2_VTABLE.as_ref().unwrap() as *const _,
+                input_items,
+                ref_count: UnsafeCell::new(1),
+                password,
+            }
         }
+    }
+
+    /// Get as IUnknown pointer
+    pub fn as_i_unknown(&self) -> *mut IUnknown {
+        self as *const UpdateCallback as *mut UpdateCallback as *mut IUnknown
     }
 
     /// Get as IArchiveUpdateCallback pointer
@@ -119,7 +274,75 @@ impl UpdateCallback {
         self as *const UpdateCallback as *mut UpdateCallback as *mut IArchiveUpdateCallback
     }
 
-    unsafe extern "system" fn query_interface(
+    // Helper to get self from IUnknown pointer
+    unsafe fn from_unknown(this: *mut IUnknown) -> *mut UpdateCallback {
+        // For IUnknown, the vtable is at offset 0, same as UpdateCallback
+        this as *mut UpdateCallback
+    }
+
+    // Helper to get self from IProgress pointer
+    unsafe fn from_progress(this: *mut IProgress) -> *mut UpdateCallback {
+        // IProgress vtable is at offset 1 (after unknown_vtable)
+        // We need to calculate the offset
+        let progress_vtable_offset = std::mem::size_of::<*const IUnknownVTable>();
+        let callback_ptr = (this as *const u8).sub(progress_vtable_offset);
+        callback_ptr as *mut UpdateCallback
+    }
+
+    // Helper to get self from IArchiveUpdateCallback pointer
+    unsafe fn from_update_callback(this: *mut IArchiveUpdateCallback) -> *mut UpdateCallback {
+        // IArchiveUpdateCallback vtable is at offset 2
+        let offset = std::mem::size_of::<*const IUnknownVTable>()
+                   + std::mem::size_of::<*const IProgressVTable>();
+        let callback_ptr = (this as *const u8).sub(offset);
+        callback_ptr as *mut UpdateCallback
+    }
+
+    // Helper to get self from IArchiveUpdateCallback2 pointer
+    unsafe fn from_update_callback2(this: *mut IArchiveUpdateCallback2) -> *mut UpdateCallback {
+        let offset = std::mem::size_of::<*const IUnknownVTable>()
+                   + std::mem::size_of::<*const IProgressVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>();
+        let callback_ptr = (this as *const u8).sub(offset);
+        callback_ptr as *mut UpdateCallback
+    }
+
+    // Helper to get self from ICompressProgressInfo pointer
+    unsafe fn from_compress_progress(this: *mut ICompressProgressInfo) -> *mut UpdateCallback {
+        let offset = std::mem::size_of::<*const IUnknownVTable>()
+                   + std::mem::size_of::<*const IProgressVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallback2VTable>();
+        let callback_ptr = (this as *const u8).sub(offset);
+        callback_ptr as *mut UpdateCallback
+    }
+
+    // Helper to get self from ICryptoGetTextPassword pointer
+    unsafe fn from_crypto_password(this: *mut ICryptoGetTextPassword) -> *mut UpdateCallback {
+        let offset = std::mem::size_of::<*const IUnknownVTable>()
+                   + std::mem::size_of::<*const IProgressVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallback2VTable>()
+                   + std::mem::size_of::<*const ICompressProgressInfoVTable>();
+        let callback_ptr = (this as *const u8).sub(offset);
+        callback_ptr as *mut UpdateCallback
+    }
+
+    // Helper to get self from ICryptoGetTextPassword2 pointer
+    unsafe fn from_crypto_password2(this: *mut ICryptoGetTextPassword2) -> *mut UpdateCallback {
+        let offset = std::mem::size_of::<*const IUnknownVTable>()
+                   + std::mem::size_of::<*const IProgressVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallback2VTable>()
+                   + std::mem::size_of::<*const ICompressProgressInfoVTable>()
+                   + std::mem::size_of::<*const ICryptoGetTextPasswordVTable>();
+        let callback_ptr = (this as *const u8).sub(offset);
+        callback_ptr as *mut UpdateCallback
+    }
+
+    // ========== IUnknown implementation ==========
+    
+    unsafe extern "system" fn unknown_query_interface(
         this: *mut IUnknown,
         iid: *const crate::ffi::GUID,
         out: *mut *mut c_void,
@@ -128,64 +351,131 @@ impl UpdateCallback {
             return -2147467261; // E_POINTER
         }
 
+        let callback = Self::from_unknown(this);
+        *out = ptr::null_mut();
+
         let iid_iunknown = IID_IUnknown;
+        let iid_progress = IID_IProgress;
         let iid_update_callback = IID_IArchiveUpdateCallback;
+        let iid_update_callback2 = IID_IArchiveUpdateCallback2;
+        let iid_compress_progress = IID_ICompressProgressInfo;
         let iid_crypto = IID_ICryptoGetTextPassword;
         let iid_crypto2 = IID_ICryptoGetTextPassword2;
-        let iid_progress = crate::ffi::IID_IProgress;
 
         if *iid == iid_iunknown {
-            *out = this as *mut c_void;
-            UpdateCallback::add_ref(this);
-            return 0; // S_OK
+            *out = callback as *mut c_void;
+        } else if *iid == iid_progress {
+            let progress_ptr = (callback as *mut u8).add(std::mem::size_of::<*const IUnknownVTable>()) as *mut IProgress;
+            *out = progress_ptr as *mut c_void;
+        } else if *iid == iid_update_callback {
+            let update_ptr = (callback as *mut u8)
+                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                   + std::mem::size_of::<*const IProgressVTable>()) as *mut IArchiveUpdateCallback;
+            *out = update_ptr as *mut c_void;
+        } else if *iid == iid_update_callback2 {
+            let update2_ptr = (callback as *mut u8)
+                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                   + std::mem::size_of::<*const IProgressVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()) as *mut IArchiveUpdateCallback2;
+            *out = update2_ptr as *mut c_void;
+        } else if *iid == iid_compress_progress {
+            let progress_ptr = (callback as *mut u8)
+                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                   + std::mem::size_of::<*const IProgressVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallback2VTable>()) as *mut ICompressProgressInfo;
+            *out = progress_ptr as *mut c_void;
+        } else if *iid == iid_crypto {
+            let crypto_ptr = (callback as *mut u8)
+                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                   + std::mem::size_of::<*const IProgressVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallback2VTable>()
+                   + std::mem::size_of::<*const ICompressProgressInfoVTable>()) as *mut ICryptoGetTextPassword;
+            *out = crypto_ptr as *mut c_void;
+        } else if *iid == iid_crypto2 {
+            let crypto2_ptr = (callback as *mut u8)
+                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                   + std::mem::size_of::<*const IProgressVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()
+                   + std::mem::size_of::<*const IArchiveUpdateCallback2VTable>()
+                   + std::mem::size_of::<*const ICompressProgressInfoVTable>()
+                   + std::mem::size_of::<*const ICryptoGetTextPasswordVTable>()) as *mut ICryptoGetTextPassword2;
+            *out = crypto2_ptr as *mut c_void;
+        } else {
+            return -2147467262; // E_NOINTERFACE
         }
 
-        if *iid == iid_progress {
-            *out = this as *mut c_void;
-            UpdateCallback::add_ref(this);
-            return 0; // S_OK
-        }
-
-        if *iid == iid_update_callback {
-            *out = this as *mut c_void;
-            UpdateCallback::add_ref(this);
-            return 0; // S_OK
-        }
-
-        if *iid == iid_crypto || *iid == iid_crypto2 {
-            *out = this as *mut c_void;
-            UpdateCallback::add_ref(this);
-            return 0; // S_OK
-        }
-
-        *out = ptr::null_mut();
-        -2147467262 // E_NOINTERFACE
+        Self::unknown_add_ref(this);
+        0 // S_OK
     }
 
-    unsafe extern "system" fn add_ref(this: *mut IUnknown) -> ULONG {
-        let callback = this as *mut UpdateCallback;
+    unsafe extern "system" fn unknown_add_ref(this: *mut IUnknown) -> ULONG {
+        let callback = Self::from_unknown(this);
         let ref_count = &(*callback).ref_count;
         let count = *ref_count.get();
         *ref_count.get() = count + 1;
         count + 1
     }
 
-    unsafe extern "system" fn release(this: *mut IUnknown) -> ULONG {
-        let callback = this as *mut UpdateCallback;
+    unsafe extern "system" fn unknown_release(this: *mut IUnknown) -> ULONG {
+        let callback = Self::from_unknown(this);
         let ref_count = &(*callback).ref_count;
         let count = *ref_count.get();
-        if count > 0 {
+        if count > 1 {
             *ref_count.get() = count - 1;
             count - 1
         } else {
+            *ref_count.get() = 0;
+            // Free the callback
+            let _ = Box::from_raw(callback);
             0
         }
+    }
+
+    // ========== IProgress implementation ==========
+    
+    unsafe extern "system" fn progress_query_interface(
+        this: *mut IProgress,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        // Delegate to IUnknown's QueryInterface
+        let callback = Self::from_progress(this);
+        Self::unknown_query_interface(Self::as_i_unknown(&*callback), iid, out)
+    }
+
+    unsafe extern "system" fn progress_add_ref(this: *mut IProgress) -> ULONG {
+        let callback = Self::from_progress(this);
+        Self::unknown_add_ref(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn progress_release(this: *mut IProgress) -> ULONG {
+        let callback = Self::from_progress(this);
+        Self::unknown_release(Self::as_i_unknown(&*callback))
     }
 
     unsafe extern "system" fn set_total(
         _this: *mut IProgress,
         _size: u64,
     ) -> HRESULT {
+        eprintln!("[Callback] SetTotal: {}", _size);
+        0 // S_OK
+    }
+
+    unsafe extern "system" fn set_total_impl(
+        _this: *mut IArchiveUpdateCallback,
+        _size: u64,
+    ) -> HRESULT {
+        eprintln!("[Callback] SetTotal: {}", _size);
+        0 // S_OK
+    }
+
+    unsafe extern "system" fn set_total_impl2(
+        _this: *mut IArchiveUpdateCallback2,
+        _size: u64,
+    ) -> HRESULT {
+        eprintln!("[Callback] SetTotal: {}", _size);
         0 // S_OK
     }
 
@@ -193,16 +483,63 @@ impl UpdateCallback {
         _this: *mut IProgress,
         _complete_value: *const u64,
     ) -> HRESULT {
+        eprintln!("[Callback] SetCompleted");
         0 // S_OK
     }
 
-    unsafe extern "system" fn get_update_item_info(
+    unsafe extern "system" fn set_completed_impl(
         _this: *mut IArchiveUpdateCallback,
+        _complete_value: *const u64,
+    ) -> HRESULT {
+        eprintln!("[Callback] SetCompleted");
+        0 // S_OK
+    }
+
+    unsafe extern "system" fn set_completed_impl2(
+        _this: *mut IArchiveUpdateCallback2,
+        _complete_value: *const u64,
+    ) -> HRESULT {
+        eprintln!("[Callback] SetCompleted");
+        0 // S_OK
+    }
+
+    // ========== IArchiveUpdateCallback implementation ==========
+    
+    unsafe extern "system" fn update_callback_query_interface(
+        this: *mut IArchiveUpdateCallback,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        let callback = Self::from_update_callback(this);
+        Self::unknown_query_interface(Self::as_i_unknown(&*callback), iid, out)
+    }
+
+    unsafe extern "system" fn update_callback_add_ref(this: *mut IArchiveUpdateCallback) -> ULONG {
+        let callback = Self::from_update_callback(this);
+        Self::unknown_add_ref(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn update_callback_release(this: *mut IArchiveUpdateCallback) -> ULONG {
+        let callback = Self::from_update_callback(this);
+        Self::unknown_release(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn get_update_item_info(
+        this: *mut IArchiveUpdateCallback,
         index: u32,
         new_data: *mut i32,
         new_properties: *mut i32,
         index_in_archive: *mut u32,
     ) -> HRESULT {
+        eprintln!("[Callback] GetUpdateItemInfo: index={}", index);
+        
+        let callback = Self::from_update_callback(this);
+        let items = &(*callback).input_items;
+
+        if index as usize >= items.len() {
+            return -2147467259; // E_FAIL
+        }
+
         // All items are new (not in existing archive)
         if !new_data.is_null() {
             *new_data = 1; // true - this is new data
@@ -222,11 +559,13 @@ impl UpdateCallback {
         prop_id: PROPID,
         value: *mut PROPVARIANT,
     ) -> HRESULT {
+        eprintln!("[Callback] GetProperty: index={}, prop_id={:?}", index, prop_id);
+        
         if value.is_null() {
             return -2147467261; // E_POINTER
         }
 
-        let callback = this as *const UpdateCallback;
+        let callback = Self::from_update_callback(this);
         let items = &(*callback).input_items;
 
         if index as usize >= items.len() {
@@ -244,12 +583,10 @@ impl UpdateCallback {
 
         match prop_id {
             PROPID::IsAnti => {
-                // Not an anti-item
                 (*value).vt = 11; // VT_BOOL
                 (*value).data[0] = 0; // false
             }
             PROPID::Path => {
-                // Set the path in the archive
                 let path_str = if let Some(ref name) = item.name_in_archive {
                     name.clone()
                 } else {
@@ -259,29 +596,23 @@ impl UpdateCallback {
                         .to_string()
                 };
 
-                // Convert to UTF-32 for Linux 7-Zip
-                let utf32: Vec<u32> = path_str.chars().map(|c| c as u32).collect();
-                let bstr = alloc_bstr_utf32(&utf32);
-
+                let bstr = alloc_bstr_from_utf32(&path_str);
                 if bstr.is_null() {
                     return -2147467259; // E_FAIL
                 }
 
                 (*value).vt = 8; // VT_BSTR
                 let data_ptr = (*value).data.as_mut_ptr() as *mut *mut u16;
-                *data_ptr = bstr as *mut u16;
+                *data_ptr = bstr;
             }
             PROPID::IsDir => {
-                // Check if it's a directory
                 let is_dir = item.path.is_dir();
                 (*value).vt = 11; // VT_BOOL
-                // VT_BOOL uses i16: TRUE = -1 (0xFFFF), FALSE = 0
                 let bool_val: i16 = if is_dir { -1 } else { 0 };
                 (*value).data[0] = (bool_val & 0xFF) as u8;
                 (*value).data[1] = ((bool_val >> 8) & 0xFF) as u8;
             }
             PROPID::Size => {
-                // Get file size (0 for directories)
                 if !item.path.is_dir() {
                     if let Ok(metadata) = std::fs::metadata(&item.path) {
                         let size = metadata.len();
@@ -292,16 +623,13 @@ impl UpdateCallback {
                 }
             }
             PROPID::Attrib => {
-                // File attributes (0 for now, could be extended)
                 (*value).vt = 19; // VT_UI4
                 (*value).data[0] = 0;
                 (*value).data[1] = 0;
                 (*value).data[2] = 0;
                 (*value).data[3] = 0;
             }
-            _ => {
-                // Return empty for other properties
-            }
+            _ => {}
         }
 
         0 // S_OK
@@ -312,11 +640,13 @@ impl UpdateCallback {
         index: u32,
         in_stream: *mut *mut ISequentialInStream,
     ) -> HRESULT {
+        eprintln!("[Callback] GetStream: index={}", index);
+        
         if in_stream.is_null() {
             return -2147467261; // E_POINTER
         }
 
-        let callback = this as *const UpdateCallback;
+        let callback = Self::from_update_callback(this);
         let items = &(*callback).input_items;
 
         if index as usize >= items.len() {
@@ -335,12 +665,9 @@ impl UpdateCallback {
         // Create a file stream for the input file
         match FileStream::new(&item.path) {
             Ok(file_stream) => {
-                // Pin the stream to prevent moving
                 let pinned_stream = Box::new(file_stream);
                 let stream_ptr = Box::into_raw(pinned_stream);
-                // Cast to ISequentialInStream (base interface of IInStream)
                 *in_stream = (*stream_ptr).as_i_in_stream() as *mut ISequentialInStream;
-                // Note: The stream will be released by 7-Zip via Release()
                 0 // S_OK
             }
             Err(_) => {
@@ -357,6 +684,27 @@ impl UpdateCallback {
         0 // S_OK
     }
 
+    // ========== ICryptoGetTextPassword implementation ==========
+    
+    unsafe extern "system" fn crypto_password_query_interface(
+        this: *mut ICryptoGetTextPassword,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        let callback = Self::from_crypto_password(this);
+        Self::unknown_query_interface(Self::as_i_unknown(&*callback), iid, out)
+    }
+
+    unsafe extern "system" fn crypto_password_add_ref(this: *mut ICryptoGetTextPassword) -> ULONG {
+        let callback = Self::from_crypto_password(this);
+        Self::unknown_add_ref(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn crypto_password_release(this: *mut ICryptoGetTextPassword) -> ULONG {
+        let callback = Self::from_crypto_password(this);
+        Self::unknown_release(Self::as_i_unknown(&*callback))
+    }
+
     unsafe extern "system" fn get_text_password(
         this: *mut ICryptoGetTextPassword,
         password: *mut *mut u16,
@@ -365,22 +713,38 @@ impl UpdateCallback {
             return -2147467261; // E_POINTER
         }
 
-        let callback = this as *const UpdateCallback;
+        let callback = Self::from_crypto_password(this);
         if let Some(ref pwd) = (*callback).password {
-            // Convert password to UTF-32
-            let utf32: Vec<u32> = pwd.chars().map(|c| c as u32).collect();
-            let bstr = alloc_bstr_utf32(&utf32);
-
+            let bstr = alloc_bstr_from_utf32(pwd);
             if bstr.is_null() {
                 return -2147467259; // E_FAIL
             }
-
-            *password = bstr as *mut u16;
+            *password = bstr;
             0 // S_OK
         } else {
-            // No password defined
             -2147467262 // E_NOINTERFACE
         }
+    }
+
+    // ========== ICryptoGetTextPassword2 implementation ==========
+    
+    unsafe extern "system" fn crypto_password2_query_interface(
+        this: *mut ICryptoGetTextPassword2,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        let callback = Self::from_crypto_password2(this);
+        Self::unknown_query_interface(Self::as_i_unknown(&*callback), iid, out)
+    }
+
+    unsafe extern "system" fn crypto_password2_add_ref(this: *mut ICryptoGetTextPassword2) -> ULONG {
+        let callback = Self::from_crypto_password2(this);
+        Self::unknown_add_ref(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn crypto_password2_release(this: *mut ICryptoGetTextPassword2) -> ULONG {
+        let callback = Self::from_crypto_password2(this);
+        Self::unknown_release(Self::as_i_unknown(&*callback))
     }
 
     unsafe extern "system" fn get_text_password2(
@@ -392,25 +756,90 @@ impl UpdateCallback {
             return -2147467261; // E_POINTER
         }
 
-        let callback = this as *const UpdateCallback;
+        let callback = Self::from_crypto_password2(this);
         if let Some(ref pwd) = (*callback).password {
             *password_is_defined = 1; // true - password is defined
 
-            // Convert password to UTF-32
-            let utf32: Vec<u32> = pwd.chars().map(|c| c as u32).collect();
-            let bstr = alloc_bstr_utf32(&utf32);
-
+            let bstr = alloc_bstr_from_utf32(pwd);
             if bstr.is_null() {
                 return -2147467259; // E_FAIL
             }
 
-            *password = bstr as *mut u16;
+            *password = bstr;
             0 // S_OK
         } else {
-            // No password defined
             *password_is_defined = 0; // false
             *password = ptr::null_mut();
             0 // S_OK
         }
+    }
+
+    // ========== IArchiveUpdateCallback2 implementation ==========
+
+    unsafe extern "system" fn update_callback2_query_interface(
+        this: *mut IArchiveUpdateCallback2,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        let callback = Self::from_update_callback2(this);
+        Self::unknown_query_interface(Self::as_i_unknown(&*callback), iid, out)
+    }
+
+    unsafe extern "system" fn update_callback2_add_ref(this: *mut IArchiveUpdateCallback2) -> ULONG {
+        let callback = Self::from_update_callback2(this);
+        Self::unknown_add_ref(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn update_callback2_release(this: *mut IArchiveUpdateCallback2) -> ULONG {
+        let callback = Self::from_update_callback2(this);
+        Self::unknown_release(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn get_volume_size(
+        _this: *mut IArchiveUpdateCallback2,
+        _index: u32,
+        _size: *mut u64,
+    ) -> HRESULT {
+        // Not supported for single-volume archives
+        -2147467262 // E_NOINTERFACE
+    }
+
+    unsafe extern "system" fn get_volume_stream(
+        _this: *mut IArchiveUpdateCallback2,
+        _index: u32,
+        _volume_stream: *mut *mut ISequentialOutStream,
+    ) -> HRESULT {
+        // Not supported for single-volume archives
+        -2147467262 // E_NOINTERFACE
+    }
+
+    // ========== ICompressProgressInfo implementation ==========
+
+    unsafe extern "system" fn compress_progress_query_interface(
+        this: *mut ICompressProgressInfo,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        let callback = Self::from_compress_progress(this);
+        Self::unknown_query_interface(Self::as_i_unknown(&*callback), iid, out)
+    }
+
+    unsafe extern "system" fn compress_progress_add_ref(this: *mut ICompressProgressInfo) -> ULONG {
+        let callback = Self::from_compress_progress(this);
+        Self::unknown_add_ref(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn compress_progress_release(this: *mut ICompressProgressInfo) -> ULONG {
+        let callback = Self::from_compress_progress(this);
+        Self::unknown_release(Self::as_i_unknown(&*callback))
+    }
+
+    unsafe extern "system" fn set_ratio_info(
+        _this: *mut ICompressProgressInfo,
+        _in_size: *const u64,
+        _out_size: *const u64,
+    ) -> HRESULT {
+        // Progress reporting not implemented
+        0 // S_OK
     }
 }

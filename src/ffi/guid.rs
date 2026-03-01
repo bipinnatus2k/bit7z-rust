@@ -98,6 +98,18 @@ pub const IID_ICryptoGetTextPassword2: GUID = GUID::from_raw(
     [0x00, 0x00, 0x00, 0x05, 0x00, 0x11, 0x00, 0x00]
 );
 
+// IArchive.h - Archive update callback 2
+pub const IID_IArchiveUpdateCallback2: GUID = GUID::from_raw(
+    0x23170F69, 0x40C1, 0x278A,
+    [0x00, 0x00, 0x00, 0x06, 0x00, 0x82, 0x00, 0x00]
+);
+
+// ICoder.h - Compress progress info
+pub const IID_ICompressProgressInfo: GUID = GUID::from_raw(
+    0x23170F69, 0x40C1, 0x278A,
+    [0x00, 0x00, 0x00, 0x06, 0x00, 0x04, 0x00, 0x00]
+);
+
 // IProperties.h - Properties interface
 pub const IID_ISetProperties: GUID = GUID::from_raw(
     0x23170F69, 0x40C1, 0x278A,

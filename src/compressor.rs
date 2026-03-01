@@ -168,8 +168,11 @@ impl<'a> BitCompressor<'a> {
 
             let archive = archive_ptr.as_ptr();
 
+            // Set archive properties (compression level, method, etc.)
+            self.set_archive_properties(archive)?;
+
             // Create update callback
-            let mut update_callback = UpdateCallback::new(
+            let update_callback = UpdateCallback::new(
                 input_items.to_vec(),
                 self.password.clone(),
             );
@@ -196,10 +199,19 @@ impl<'a> BitCompressor<'a> {
 
     /// Set archive properties (compression level, method, etc.)
     unsafe fn set_archive_properties(&self, archive: *mut IOutArchive) -> Result<()> {
+        // TODO: Implement proper property setting
+        // For now, skip property setting to avoid crashes
+        // The 7-Zip library will use default properties
+        Ok(())
+        
+        /*
+        use crate::ffi::{ISetProperties, IID_ISetProperties, PROPVARIANT, VARENUM};
+        use crate::ffi::variant::alloc_bstr_from_utf32;
+        
         // Try to get ISetProperties interface
         let mut set_props_ptr: *mut std::ffi::c_void = ptr::null_mut();
         let iid = IID_ISetProperties;
-        
+
         // Cast archive to IUnknown for QueryInterface
         let unknown = archive as *mut IUnknown;
         let archive_vtable = &*(*archive).vtable;
@@ -217,14 +229,54 @@ impl<'a> BitCompressor<'a> {
         let set_properties: *mut ISetProperties = set_props_ptr as *mut ISetProperties;
 
         // Build property names and values
-        // Note: 7-Zip expects property values as PROPVARIANT types, not raw values
-        // For now, we skip setting properties to get basic compression working
-        // TODO: Implement proper PROPVARIANT-based property setting
-        
+        // For now, only set compression level ("x" property)
+        let mut prop_names: Vec<*const u16> = Vec::new();
+        let mut prop_values: Vec<PROPVARIANT> = Vec::new();
+
+        // Add compression level property
+        let level_name = alloc_bstr_from_utf32("x");
+        if !level_name.is_null() {
+            prop_names.push(level_name);
+            
+            let mut level_value = PROPVARIANT::default();
+            level_value.vt = VARENUM::VT_UI4 as u16;
+            level_value.data[0] = self.compression_level.to_value() as u8;
+            level_value.data[1] = 0;
+            level_value.data[2] = 0;
+            level_value.data[3] = 0;
+            prop_values.push(level_value);
+        }
+
+        // Call SetProperties
+        if !prop_names.is_empty() && !prop_values.is_empty() {
+            let set_vtable = &*(*set_properties).vtable;
+            let names_ptr = prop_names.as_ptr();
+            let values_ptr = prop_values.as_ptr();
+            let num_props = prop_names.len() as u32;
+            
+            let set_result = (set_vtable.set_properties)(
+                set_properties,
+                names_ptr,
+                values_ptr as *const *const std::ffi::c_void,
+                num_props,
+            );
+            
+            if set_result != 0 {
+                eprintln!("[WARN] SetProperties returned 0x{:X}", set_result);
+            }
+        }
+
         // Release the interface
         let set_vtable = &*(*set_properties).vtable;
         (set_vtable.base.release)(set_properties as *mut IUnknown);
 
+        // Free allocated BSTRs
+        for name in prop_names {
+            crate::ffi::variant::free_bstr(name as *mut u16);
+        }
+        // PROPVARIANT values don't own the BSTR, so don't free them here
+
         Ok(())
+        */
     }
 }
