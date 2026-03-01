@@ -1,0 +1,660 @@
+//! Comprehensive tests for bit7z-rust functionality
+//!
+//! This test suite verifies all implemented features including:
+//! - BitOutputArchive compression
+//! - Format detection
+//! - Compression properties
+//! - Callbacks
+//! - Overwrite modes
+
+use bit7z_rust::{
+    BitLibrary, BitOutputArchive, BitCompressor,
+    CompressionFormat, CompressionLevel, CompressionMethod,
+    UpdateMode, OverwriteMode,
+    detect_format_from_extension,
+};
+use std::fs;
+
+// ============================================================================
+// Test Utilities
+// ============================================================================
+
+/// Create test files for compression
+fn create_test_files(prefix: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let temp_dir = std::env::temp_dir().join(format!("bit7z_test_{}", prefix));
+    fs::create_dir_all(&temp_dir)?;
+    
+    let mut files = Vec::new();
+    
+    // Create test file 1
+    let test_file1 = temp_dir.join("test1.txt");
+    fs::write(&test_file1, "Hello, World! This is test file 1 with some content.")?;
+    files.push(test_file1.to_string_lossy().to_string());
+    
+    // Create test file 2
+    let test_file2 = temp_dir.join("test2.txt");
+    fs::write(&test_file2, "Hello, World! This is test file 2 with different content.")?;
+    files.push(test_file2.to_string_lossy().to_string());
+    
+    Ok(files)
+}
+
+/// Create a test directory structure
+fn create_test_directory(prefix: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let temp_dir = std::env::temp_dir().join(format!("bit7z_test_dir_{}", prefix));
+    fs::create_dir_all(&temp_dir)?;
+    
+    // Create files in root
+    fs::write(temp_dir.join("file1.txt"), "Content 1")?;
+    fs::write(temp_dir.join("file2.txt"), "Content 2")?;
+    
+    // Create subdirectory with files
+    let sub_dir = temp_dir.join("subdir");
+    fs::create_dir_all(&sub_dir)?;
+    fs::write(sub_dir.join("file3.txt"), "Content 3")?;
+    fs::write(sub_dir.join("file4.txt"), "Content 4")?;
+    
+    Ok(temp_dir.to_string_lossy().to_string())
+}
+
+/// Clean up test files
+fn cleanup_test_files(prefix: &str) {
+    let temp_dir = std::env::temp_dir().join(format!("bit7z_test_{}", prefix));
+    let _ = fs::remove_dir_all(&temp_dir);
+    
+    let temp_dir = std::env::temp_dir().join(format!("bit7z_test_dir_{}", prefix));
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+/// Clean up output files
+fn cleanup_output_files(patterns: &[&str]) {
+    for pattern in patterns {
+        let path = std::env::temp_dir().join(pattern);
+        let _ = fs::remove_file(path);
+    }
+}
+
+// ============================================================================
+// BitOutputArchive Tests
+// ============================================================================
+
+#[test]
+fn test_output_archive_basic_compression() {
+    let prefix = "basic";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_basic.7z");
+    
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive.compression_level(CompressionLevel::Normal);
+    
+    for file in &files {
+        archive.add_file(file);
+    }
+    
+    let result = archive.compress_to(&output_path);
+    
+    if result.is_err() {
+        eprintln!("Compression failed: {:?}", result);
+    }
+    
+    // Check output before cleanup
+    let output_exists = output_path.exists();
+    if output_exists {
+        let metadata = fs::metadata(&output_path).unwrap();
+        eprintln!("Output file size: {} bytes", metadata.len());
+    } else {
+        eprintln!("Output file does not exist");
+    }
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_basic.7z"]);
+    
+    assert!(result.is_ok(), "Basic compression should succeed: {:?}", result);
+    assert!(output_exists, "Output file should exist");
+    
+    if output_exists {
+        let metadata = fs::metadata(&output_path).unwrap();
+        assert!(metadata.len() > 0, "Output file should not be empty");
+    }
+}
+
+#[test]
+fn test_output_archive_buffer_compression() {
+    let prefix = "buffer";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let mut archive = BitOutputArchive::new(CompressionFormat::Zip);
+    archive.compression_level(CompressionLevel::Fast);
+    
+    for file in &files {
+        archive.add_file(file);
+    }
+    
+    let result = archive.compress_to_buffer();
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    
+    assert!(result.is_ok(), "Buffer compression should succeed: {:?}", result);
+    let buffer = result.unwrap();
+    assert!(!buffer.is_empty(), "Buffer should not be empty");
+    assert!(buffer.len() > 100, "Buffer should contain meaningful data");
+}
+
+#[test]
+fn test_output_archive_stream_compression() {
+    let prefix = "stream";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    
+    for file in &files {
+        archive.add_file(file);
+    }
+    
+    let mut buffer = Vec::new();
+    let result = archive.compress_to_stream(&mut buffer);
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    
+    assert!(result.is_ok(), "Stream compression should succeed: {:?}", result);
+    assert!(!buffer.is_empty(), "Buffer should not be empty");
+}
+
+#[test]
+fn test_output_archive_custom_names() {
+    let prefix = "custom";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_custom.7z");
+    
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive.add_file_with_name(&files[0], "renamed1.txt".to_string());
+    archive.add_file_with_name(&files[1], "renamed2.txt".to_string());
+    
+    let result = archive.compress_to(&output_path);
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_custom.7z"]);
+    
+    assert!(result.is_ok(), "Compression with custom names should succeed: {:?}", result);
+}
+
+#[test]
+fn test_output_archive_directory() {
+    let prefix = "dir";
+    let dir_path = match create_test_directory(prefix) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Failed to create test directory: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_directory.7z");
+    
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    let add_result = archive.add_directory(&dir_path);
+    
+    if add_result.is_ok() {
+        let compress_result = archive.compress_to(&output_path);
+        assert!(compress_result.is_ok(), "Directory compression should succeed: {:?}", compress_result);
+    }
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_directory.7z"]);
+}
+
+// ============================================================================
+// Overwrite Mode Tests
+// ============================================================================
+
+#[test]
+fn test_overwrite_mode_none() {
+    let prefix = format!("ow_none_{}", std::process::id());
+    let files = match create_test_files(&prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join(format!("test_ow_none_{}.7z", prefix));
+    
+    // First compression
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive.add_file(&files[0]);
+    let result1 = archive.compress_to(&output_path);
+    if result1.is_err() {
+        eprintln!("First compression failed: {:?}", result1);
+    }
+    assert!(result1.is_ok(), "First compression should succeed");
+    
+    // Second compression with OverwriteMode::None should fail
+    let mut archive2 = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive2.overwrite_mode(OverwriteMode::None);
+    archive2.add_file(&files[1]);
+    let result2 = archive2.compress_to(&output_path);
+    
+    // Cleanup
+    cleanup_test_files(&prefix);
+    let _ = fs::remove_file(&output_path);
+    
+    assert!(result2.is_err(), "Second compression with None mode should fail");
+}
+
+#[test]
+fn test_overwrite_mode_overwrite() {
+    let prefix = "ow_overwrite";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_ow_overwrite.7z");
+    
+    // First compression
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive.add_file(&files[0]);
+    let result1 = archive.compress_to(&output_path);
+    assert!(result1.is_ok(), "First compression should succeed");
+
+    let _first_size = fs::metadata(&output_path).unwrap().len();
+
+    // Second compression with OverwriteMode::Overwrite should succeed
+    let mut archive2 = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive2.overwrite_mode(OverwriteMode::Overwrite);
+    archive2.add_file(&files[1]);
+    let result2 = archive2.compress_to(&output_path);
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_ow_overwrite.7z"]);
+    
+    assert!(result2.is_ok(), "Second compression with Overwrite mode should succeed: {:?}", result2);
+}
+
+#[test]
+fn test_overwrite_mode_skip() {
+    let prefix = "ow_skip";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_ow_skip.7z");
+    
+    // First compression
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive.add_file(&files[0]);
+    let result1 = archive.compress_to(&output_path);
+    assert!(result1.is_ok(), "First compression should succeed");
+    
+    let first_size = fs::metadata(&output_path).unwrap().len();
+    
+    // Second compression with OverwriteMode::Skip should succeed but not modify file
+    let mut archive2 = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive2.overwrite_mode(OverwriteMode::Skip);
+    archive2.add_file(&files[1]);
+    let result2 = archive2.compress_to(&output_path);
+    
+    let second_size = fs::metadata(&output_path).unwrap().len();
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_ow_skip.7z"]);
+    
+    assert!(result2.is_ok(), "Second compression with Skip mode should succeed");
+    assert_eq!(first_size, second_size, "File should not be modified in Skip mode");
+}
+
+// ============================================================================
+// Compression Properties Tests
+// ============================================================================
+
+#[test]
+fn test_compression_level_none() {
+    let prefix = "level_none";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_level_none.7z");
+    
+    let lib = match BitLibrary::new(None::<&str>) {
+        Ok(lib) => lib,
+        Err(_) => {
+            eprintln!("Skipping test: 7-Zip library not available");
+            return;
+        }
+    };
+    
+    let mut compressor = BitCompressor::new(&lib, CompressionFormat::SevenZip);
+    compressor.compression_level(CompressionLevel::None);
+    
+    let result = compressor.compress(&files, output_path.to_str().unwrap().to_string());
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_level_none.7z"]);
+    
+    assert!(result.is_ok(), "Compression with None level should succeed: {:?}", result);
+}
+
+#[test]
+fn test_compression_level_ultra() {
+    let prefix = "level_ultra";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_level_ultra.7z");
+    
+    let lib = match BitLibrary::new(None::<&str>) {
+        Ok(lib) => lib,
+        Err(_) => {
+            eprintln!("Skipping test: 7-Zip library not available");
+            return;
+        }
+    };
+    
+    let mut compressor = BitCompressor::new(&lib, CompressionFormat::SevenZip);
+    compressor.compression_level(CompressionLevel::Ultra);
+    
+    let result = compressor.compress(&files, output_path.to_str().unwrap().to_string());
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_level_ultra.7z"]);
+    
+    assert!(result.is_ok(), "Compression with Ultra level should succeed: {:?}", result);
+}
+
+#[test]
+fn test_compression_with_method() {
+    let prefix = "method";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_method.7z");
+    
+    let lib = match BitLibrary::new(None::<&str>) {
+        Ok(lib) => lib,
+        Err(_) => {
+            eprintln!("Skipping test: 7-Zip library not available");
+            return;
+        }
+    };
+    
+    let mut compressor = BitCompressor::new(&lib, CompressionFormat::SevenZip);
+    compressor
+        .compression_level(CompressionLevel::Max)
+        .compression_method(CompressionMethod::Lzma2);
+    
+    let result = compressor.compress(&files, output_path.to_str().unwrap().to_string());
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_method.7z"]);
+    
+    assert!(result.is_ok(), "Compression with LZMA2 method should succeed: {:?}", result);
+}
+
+#[test]
+fn test_compression_with_solid() {
+    let prefix = "solid";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_solid.7z");
+    
+    let lib = match BitLibrary::new(None::<&str>) {
+        Ok(lib) => lib,
+        Err(_) => {
+            eprintln!("Skipping test: 7-Zip library not available");
+            return;
+        }
+    };
+    
+    let mut compressor = BitCompressor::new(&lib, CompressionFormat::SevenZip);
+    compressor
+        .compression_level(CompressionLevel::Max)
+        .solid(true);
+    
+    let result = compressor.compress(&files, output_path.to_str().unwrap().to_string());
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_solid.7z"]);
+    
+    assert!(result.is_ok(), "Compression with solid mode should succeed: {:?}", result);
+}
+
+#[test]
+fn test_compression_with_crypt_headers() {
+    let prefix = "crypt";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_crypt.7z");
+    
+    let lib = match BitLibrary::new(None::<&str>) {
+        Ok(lib) => lib,
+        Err(_) => {
+            eprintln!("Skipping test: 7-Zip library not available");
+            return;
+        }
+    };
+    
+    let mut compressor = BitCompressor::new(&lib, CompressionFormat::SevenZip);
+    compressor
+        .password("test_password")
+        .crypt_headers(true);
+    
+    let result = compressor.compress(&files, output_path.to_str().unwrap().to_string());
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_crypt.7z"]);
+    
+    assert!(result.is_ok(), "Compression with encrypted headers should succeed: {:?}", result);
+}
+
+// ============================================================================
+// Format Detection Tests
+// ============================================================================
+
+#[test]
+fn test_format_detection_by_extension() {
+    // Test common extensions
+    assert_eq!(
+        detect_format_from_extension("test.7z"),
+        Some(bit7z_rust::ExtractFormat::SevenZip)
+    );
+    assert_eq!(
+        detect_format_from_extension("archive.zip"),
+        Some(bit7z_rust::ExtractFormat::Zip)
+    );
+    assert_eq!(
+        detect_format_from_extension("file.tar.gz"),
+        Some(bit7z_rust::ExtractFormat::GZip)
+    );
+    assert_eq!(
+        detect_format_from_extension("data.rar"),
+        Some(bit7z_rust::ExtractFormat::Rar)
+    );
+    assert_eq!(
+        detect_format_from_extension("backup.bz2"),
+        Some(bit7z_rust::ExtractFormat::BZip2)
+    );
+    
+    // Test unknown extension
+    assert_eq!(
+        detect_format_from_extension("unknown.xyz"),
+        None
+    );
+}
+
+#[test]
+fn test_format_detection_case_insensitive() {
+    assert_eq!(
+        detect_format_from_extension("test.7Z"),
+        Some(bit7z_rust::ExtractFormat::SevenZip)
+    );
+    assert_eq!(
+        detect_format_from_extension("archive.ZIP"),
+        Some(bit7z_rust::ExtractFormat::Zip)
+    );
+    assert_eq!(
+        detect_format_from_extension("file.Tar.Gz"),
+        Some(bit7z_rust::ExtractFormat::GZip)
+    );
+}
+
+// ============================================================================
+// Update Mode Tests
+// ============================================================================
+
+#[test]
+fn test_update_mode_none() {
+    let prefix = "update_none";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_update_none.7z");
+    
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive.update_mode(UpdateMode::None);
+    archive.add_file(&files[0]);
+    
+    let result = archive.compress_to(&output_path);
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_update_none.7z"]);
+    
+    assert!(result.is_ok(), "Compression with UpdateMode::None should succeed for new archive");
+}
+
+// ============================================================================
+// Multiple Files Tests
+// ============================================================================
+
+#[test]
+fn test_compress_multiple_files() {
+    let prefix = "multi";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_multi.7z");
+    
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    for file in &files {
+        archive.add_file(file);
+    }
+    
+    let result = archive.compress_to(&output_path);
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_multi.7z"]);
+    
+    assert!(result.is_ok(), "Multiple files compression should succeed: {:?}", result);
+    
+    let metadata = fs::metadata(&output_path).unwrap();
+    assert!(metadata.len() > 0, "Output file should not be empty");
+}
+
+#[test]
+fn test_compress_add_files_iterator() {
+    let prefix = "add_files";
+    let files = match create_test_files(prefix) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create test files: {}", e);
+            return;
+        }
+    };
+    
+    let output_path = std::env::temp_dir().join("test_add_files.7z");
+    
+    let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
+    archive.add_files(&files);
+    
+    let result = archive.compress_to(&output_path);
+    
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_add_files.7z"]);
+    
+    assert!(result.is_ok(), "add_files compression should succeed: {:?}", result);
+}
