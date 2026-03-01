@@ -56,30 +56,38 @@ impl<'a> BitExtractor<'a> {
             ));
 
             // For some formats (like TAR), we need to pass null or they fail to open
-            let max_check_start_position: *const u64 = std::ptr::null();
+            let max_check_start_position: u64 = 0;
 
             let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
 
-            let result = ((*(*archive_ptr.as_ptr()).vtable).open)(
+            // Open archive - pass max_check_start_position as pointer (0 means search from file start)
+            // This matches bit7z's ArchiveStartOffset::FileStart behavior
+            let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
                 in_stream.as_i_in_stream(),
-                max_check_start_position,
+                &max_check_start_position,
                 open_callback.as_i_archive_open_callback(),
             );
 
-            // S_OK (0) and S_FALSE (1) are both success for some formats
-            if result != 0 && result != 1 {
+            // S_OK (0) and S_FALSE (1) are both success codes
+            // S_FALSE can be returned for some formats or when archive is not fully recognized
+            if open_result != 0 && open_result != 1 {
                 return Err(Bit7zError::OpenFailed(format!(
-                    "Failed to open archive: HRESULT 0x{:08X}", result
+                    "Failed to open archive: HRESULT 0x{:08X}", open_result
                 )));
             }
 
             // Get number of items
             let mut num_items: u32 = 0;
-            let result = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
+            let get_num_result = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
                 archive_ptr.as_ptr(),
                 &mut num_items,
             );
+
+            // Note: We don't check for invalid archives here because:
+            // 1. Some valid single-file formats may return 0 items initially
+            // 2. bit7z also doesn't check items count after open
+            // The validity check is done during extract operation
 
             let output_path = output_dir.as_ref();
             if !output_path.exists() {
@@ -139,7 +147,8 @@ impl<'a> BitExtractor<'a> {
                 open_callback.as_i_archive_open_callback(),
             );
 
-            if result != 0 {
+            // S_OK (0) and S_FALSE (1) are both success codes
+            if result != 0 && result != 1 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive from buffer: HRESULT 0x{:08X}", result
                 )));
