@@ -1,92 +1,66 @@
-use std::ffi::c_void;
-use std::ptr;
+//! 列出 7-Zip 支持的所有格式
+//!
+//! 使用 BitLibrary API 来列出所有可用的压缩格式
 
-#[repr(C)]
-struct GUID {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [u8; 8],
-}
+use bit7z_rust::BitLibrary;
+use bit7z_rust::ffi::{
+    GUID,
+    CLSID_CFormat7z, CLSID_CFormatZip, CLSID_CFormatGZip,
+    CLSID_CFormatBZip2, CLSID_CFormatRar, CLSID_CFormatRar5,
+    CLSID_CFormatTar, CLSID_CFormatWim, CLSID_CFormatXz,
+};
 
-#[repr(C)]
-union PropVariantData {
-    data: [u8; 16],
-    ulVal: u32,
-    bstrVal: *mut u16,
-}
-
-#[repr(C)]
-struct PROPVARIANT {
-    vt: u16,
-    wReserved1: u16,
-    wReserved2: u16,
-    wReserved3: u16,
-    data: PropVariantData,
-}
-
-const VT_BSTR: u16 = 8;
-const VT_UI4: u16 = 19;
-
-extern "C" {
-    fn GetNumberOfFormats(num_formats: *mut u32) -> i32;
-    fn GetHandlerProperty2(format_index: u32, prop_id: u32, value: *mut PROPVARIANT) -> i32;
-}
+// 所有支持的格式 CLSID 列表
+const FORMAT_CLSIDS: &[(&str, &GUID)] = &[
+    ("7z", &CLSID_CFormat7z),
+    ("ZIP", &CLSID_CFormatZip),
+    ("GZip", &CLSID_CFormatGZip),
+    ("BZip2", &CLSID_CFormatBZip2),
+    ("RAR", &CLSID_CFormatRar),
+    ("RAR5", &CLSID_CFormatRar5),
+    ("TAR", &CLSID_CFormatTar),
+    ("WIM", &CLSID_CFormatWim),
+    ("XZ", &CLSID_CFormatXz),
+];
 
 fn main() {
     println!("=== 7-Zip 格式列表 ===\n");
 
-    unsafe {
-        let mut num_formats: u32 = 0;
-        let result = GetNumberOfFormats(&mut num_formats);
-        println!("GetNumberOfFormats 返回：0x{:08X}, 格式数量：{}", result, num_formats);
+    let lib = match BitLibrary::new(Some("/usr/lib/7zip/7z.so")) {
+        Ok(lib) => {
+            println!("✓ 7-Zip 库加载成功\n");
+            lib
+        },
+        Err(e) => {
+            println!("✗ 7-Zip 库加载失败：{:?}", e);
+            return;
+        }
+    };
 
-        for i in 0..num_formats {
-            let mut name_prop = PROPVARIANT {
-                vt: 0,
-                wReserved1: 0,
-                wReserved2: 0,
-                wReserved3: 0,
-                data: PropVariantData { data: [0; 16] },
-            };
-
-            // kpidName = 0
-            let result = GetHandlerProperty2(i, 0, &mut name_prop);
-            if result == 0 && name_prop.vt == VT_BSTR {
-                let name_ptr = name_prop.data.bstrVal;
-                if !name_ptr.is_null() {
-                    // 读取 BSTR 长度（前 4 字节）
-                    let len_ptr = (name_ptr as *const u8).offset(-4) as *const u32;
-                    let byte_len = *len_ptr as usize;
-                    let char_len = byte_len / 2;
+    println!("可用的压缩格式:\n");
+    
+    for (name, clsid) in FORMAT_CLSIDS {
+        unsafe {
+            let result = lib.create_in_archive(clsid);
+            match result {
+                Ok(archive_nonnull) => {
+                    println!("  ✓ {:6} - 可用", name);
                     
-                    let name_slice = std::slice::from_raw_parts(name_ptr, char_len);
-                    let name = String::from_utf16_lossy(name_slice);
+                    // 释放对象
+                    use bit7z_rust::ffi::IUnknown;
+                    use std::ffi::c_void;
                     
-                    // kpidExtension = 4
-                    let mut ext_prop = PROPVARIANT {
-                        vt: 0,
-                        wReserved1: 0,
-                        wReserved2: 0,
-                        wReserved3: 0,
-                        data: PropVariantData { data: [0; 16] },
-                    };
-                    GetHandlerProperty2(i, 4, &mut ext_prop);
-                    
-                    let ext = if ext_prop.vt == VT_BSTR && !ext_prop.data.bstrVal.is_null() {
-                        let ext_ptr = ext_prop.data.bstrVal;
-                        let len_ptr = (ext_ptr as *const u8).offset(-4) as *const u32;
-                        let byte_len = *len_ptr as usize;
-                        let char_len = byte_len / 2;
-                        let ext_slice = std::slice::from_raw_parts(ext_ptr, char_len);
-                        String::from_utf16_lossy(ext_slice)
-                    } else {
-                        String::new()
-                    };
-
-                    println!("  格式 {}: {} ({})", i, name, ext);
+                    let archive_ptr = archive_nonnull.as_ptr() as *mut c_void;
+                    let archive = &*archive_nonnull.as_ptr();
+                    let vtable = &*archive.vtable;
+                    (vtable.base.release)(archive_ptr as *mut IUnknown);
+                },
+                Err(e) => {
+                    println!("  ✗ {:6} - 不可用：{:?}", name, e);
                 }
             }
         }
     }
+
+    println!("\n=== 列表完成 ===");
 }

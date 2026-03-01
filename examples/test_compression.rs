@@ -7,8 +7,8 @@
 //! 4. 从内存缓冲区解压
 
 use bit7z_rust::{
-    BitLibrary, BitCompressor, BitExtractor, BitArchiveReader,
-    CompressionFormat, ExtractFormat, CompressionLevel,
+    BitLibrary, BitExtractor, BitArchiveReader,
+    ExtractFormat,
 };
 use std::fs;
 use std::path::Path;
