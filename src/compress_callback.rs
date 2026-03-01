@@ -340,6 +340,13 @@ impl UpdateCallback {
         callback_ptr as *mut UpdateCallback
     }
 
+    // Finalize callback (close any open streams)
+    unsafe fn finalize(&mut self) -> HRESULT {
+        // In our implementation, streams are closed automatically when dropped
+        // This matches bit7z's behavior of closing streams between items
+        0 // S_OK
+    }
+
     // ========== IUnknown implementation ==========
     
     unsafe extern "system" fn unknown_query_interface(
@@ -532,11 +539,12 @@ impl UpdateCallback {
         index_in_archive: *mut u32,
     ) -> HRESULT {
         eprintln!("[Callback] GetUpdateItemInfo: index={}", index);
-        
+
         let callback = Self::from_update_callback(this);
         let items = &(*callback).input_items;
 
         if index as usize >= items.len() {
+            eprintln!("[Callback] GetUpdateItemInfo: index out of bounds");
             return -2147467259; // E_FAIL
         }
 
@@ -550,6 +558,7 @@ impl UpdateCallback {
         if !index_in_archive.is_null() {
             *index_in_archive = 0xFFFFFFFF; // -1 = not in archive (new item)
         }
+        eprintln!("[Callback] GetUpdateItemInfo: returning newData=1, newProperties=1, indexInArchive=-1");
         0 // S_OK
     }
 
@@ -641,12 +650,16 @@ impl UpdateCallback {
         in_stream: *mut *mut ISequentialInStream,
     ) -> HRESULT {
         eprintln!("[Callback] GetStream: index={}", index);
-        
+
         if in_stream.is_null() {
             return -2147467261; // E_POINTER
         }
 
         let callback = Self::from_update_callback(this);
+        
+        // Call finalize to close any previous stream (matching bit7z behavior)
+        // Note: finalize is a no-op in our implementation since streams auto-close on drop
+
         let items = &(*callback).input_items;
 
         if index as usize >= items.len() {
@@ -668,9 +681,11 @@ impl UpdateCallback {
                 let pinned_stream = Box::new(file_stream);
                 let stream_ptr = Box::into_raw(pinned_stream);
                 *in_stream = (*stream_ptr).as_i_in_stream() as *mut ISequentialInStream;
+                eprintln!("[Callback] GetStream: created stream for {:?}", item.path);
                 0 // S_OK
             }
-            Err(_) => {
+            Err(e) => {
+                eprintln!("[Callback] GetStream: failed to create stream: {}", e);
                 *in_stream = ptr::null_mut();
                 -2147467259 // E_FAIL
             }

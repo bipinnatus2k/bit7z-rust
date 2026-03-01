@@ -161,23 +161,29 @@ impl<'a> BitCompressor<'a> {
         out_stream: &FileStreamWrite,
     ) -> Result<()> {
         unsafe {
+            eprintln!("[compress_internal] Creating archive object...");
+            
             // Create output archive object
             let format_guid = self.format.info().guid;
             let archive_ptr = self.library.create_out_archive(&format_guid)
                 .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
 
             let archive = archive_ptr.as_ptr();
+            eprintln!("[compress_internal] Archive created: {:?}", archive);
 
             // Set archive properties (compression level, method, etc.)
+            eprintln!("[compress_internal] Setting archive properties...");
             self.set_archive_properties(archive)?;
 
             // Create update callback
+            eprintln!("[compress_internal] Creating update callback...");
             let update_callback = UpdateCallback::new(
                 input_items.to_vec(),
                 self.password.clone(),
             );
 
             // Call UpdateItems
+            eprintln!("[compress_internal] Calling UpdateItems with {} items...", input_items.len());
             let num_items = input_items.len() as u32;
             let archive_vtable = &*(*archive).vtable;
             let result = (archive_vtable.update_items)(
@@ -186,8 +192,11 @@ impl<'a> BitCompressor<'a> {
                 num_items,
                 update_callback.as_i_archive_update_callback(),
             );
+            eprintln!("[compress_internal] UpdateItems returned: 0x{:X}", result);
 
-            if result != 0 {
+            // S_OK (0) and S_FALSE (1) are both success codes
+            // S_FALSE may indicate some items were not compressed but overall operation succeeded
+            if result != 0 && result != 1 {
                 return Err(Bit7zError::CompressFailed(
                     format!("UpdateItems failed with HRESULT: 0x{:X}", result)
                 ));

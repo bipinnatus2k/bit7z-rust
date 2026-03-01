@@ -186,6 +186,13 @@ impl FileStream {
     }
 }
 
+impl Drop for FileStreamWrite {
+    fn drop(&mut self) {
+        // Ensure file is flushed and synced before closing
+        let _ = self.file.sync_all();
+    }
+}
+
 /// Wrapper for File that implements IOutStream
 ///
 /// Memory layout: vtable must be first to match C++ COM object layout
@@ -277,18 +284,22 @@ impl FileStreamWrite {
             return -2147467261; // E_POINTER
         }
 
+        eprintln!("[FileStreamWrite::write] size={}, this={:?}", size, this);
+
         let stream = this as *mut FileStreamWrite;
         let file = &mut (*stream).file;
 
         let buf = std::slice::from_raw_parts(data as *const u8, size as usize);
         match file.write_all(buf) {
             Ok(_) => {
+                eprintln!("[FileStreamWrite::write] write_all succeeded");
                 if !processed_size.is_null() {
                     write_unaligned(processed_size, size);
                 }
                 0 // S_OK
             }
-            Err(_) => {
+            Err(e) => {
+                eprintln!("[FileStreamWrite::write] write_all failed: {}", e);
                 if !processed_size.is_null() {
                     write_unaligned(processed_size, 0);
                 }
@@ -296,7 +307,7 @@ impl FileStreamWrite {
             }
         }
     }
-    
+
     unsafe extern "system" fn seek(
         this: *mut IOutStream,
         offset: i64,
