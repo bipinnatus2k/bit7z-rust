@@ -361,6 +361,20 @@ impl CompressionFormat {
     }
 }
 
+impl From<CompressionFormat> for ExtractFormat {
+    fn from(compression: CompressionFormat) -> Self {
+        match compression {
+            CompressionFormat::SevenZip => ExtractFormat::SevenZip,
+            CompressionFormat::Zip => ExtractFormat::Zip,
+            CompressionFormat::GZip => ExtractFormat::GZip,
+            CompressionFormat::BZip2 => ExtractFormat::BZip2,
+            CompressionFormat::Tar => ExtractFormat::Tar,
+            CompressionFormat::Xz => ExtractFormat::Xz,
+            CompressionFormat::Wim => ExtractFormat::Wim,
+        }
+    }
+}
+
 impl ExtractFormat {
     /// Get the format GUID
     pub const fn guid(&self) -> GUID {

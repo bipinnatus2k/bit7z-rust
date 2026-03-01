@@ -58,6 +58,59 @@ impl InputItem {
     }
 }
 
+/// Input item type for update operations
+#[derive(Clone)]
+pub enum InputItemType {
+    /// New file from filesystem
+    NewFile(PathBuf),
+    /// Keep existing item from archive (by index)
+    KeepExisting(u32),
+    /// Update existing item with new file
+    UpdateExisting(u32, PathBuf),
+}
+
+/// Extended input item for update operations
+#[derive(Clone)]
+pub struct ExtendedInputItem {
+    pub item_type: InputItemType,
+    pub name_in_archive: Option<String>,
+}
+
+impl ExtendedInputItem {
+    pub fn new_file<P: AsRef<Path>>(path: P) -> Self {
+        ExtendedInputItem {
+            item_type: InputItemType::NewFile(path.as_ref().to_path_buf()),
+            name_in_archive: None,
+        }
+    }
+
+    pub fn keep_existing(index: u32) -> Self {
+        ExtendedInputItem {
+            item_type: InputItemType::KeepExisting(index),
+            name_in_archive: None,
+        }
+    }
+
+    pub fn update_existing<P: AsRef<Path>>(index: u32, path: P) -> Self {
+        ExtendedInputItem {
+            item_type: InputItemType::UpdateExisting(index, path.as_ref().to_path_buf()),
+            name_in_archive: None,
+        }
+    }
+}
+
+/// Progress callback type - receives (completed, total)
+pub type ProgressCallback = Box<dyn Fn(u64, u64) + Send + Sync>;
+
+/// Ratio callback type - receives (in_size, out_size)
+pub type RatioCallback = Box<dyn Fn(u64, u64) + Send + Sync>;
+
+/// File callback type - receives file path
+pub type FileCallback = Box<dyn Fn(&str) + Send + Sync>;
+
+/// Password callback type - returns password
+pub type PasswordCallback = Box<dyn Fn() -> Option<String> + Send + Sync>;
+
 /// Main callback object containing all data
 /// This is the "master" object that owns all the data
 #[repr(C)]
@@ -80,6 +133,11 @@ pub struct UpdateCallback {
     input_items: Vec<InputItem>,
     ref_count: UnsafeCell<u32>,
     password: Option<String>,
+    // Callbacks
+    progress_callback: Option<ProgressCallback>,
+    ratio_callback: Option<RatioCallback>,
+    file_callback: Option<FileCallback>,
+    password_callback: Option<PasswordCallback>,
 }
 
 // Static vtables - initialized once
@@ -247,7 +305,7 @@ impl UpdateCallback {
     /// Create a new UpdateCallback with input items
     pub fn new(input_items: Vec<InputItem>, password: Option<String>) -> Self {
         init_vtables();
-        
+
         unsafe {
             UpdateCallback {
                 unknown_vtable: UNKNOWN_VTABLE.as_ref().unwrap() as *const _,
@@ -260,6 +318,41 @@ impl UpdateCallback {
                 input_items,
                 ref_count: UnsafeCell::new(1),
                 password,
+                progress_callback: None,
+                ratio_callback: None,
+                file_callback: None,
+                password_callback: None,
+            }
+        }
+    }
+
+    /// Create a new UpdateCallback with callbacks
+    pub fn with_callbacks(
+        input_items: Vec<InputItem>,
+        password: Option<String>,
+        progress_callback: Option<ProgressCallback>,
+        ratio_callback: Option<RatioCallback>,
+        file_callback: Option<FileCallback>,
+        password_callback: Option<PasswordCallback>,
+    ) -> Self {
+        init_vtables();
+
+        unsafe {
+            UpdateCallback {
+                unknown_vtable: UNKNOWN_VTABLE.as_ref().unwrap() as *const _,
+                progress_vtable: PROGRESS_VTABLE.as_ref().unwrap() as *const _,
+                update_callback_vtable: UPDATE_CALLBACK_VTABLE.as_ref().unwrap() as *const _,
+                update_callback2_vtable: UPDATE_CALLBACK2_VTABLE.as_ref().unwrap() as *const _,
+                compress_progress_vtable: COMPRESS_PROGRESS_VTABLE.as_ref().unwrap() as *const _,
+                crypto_password_vtable: CRYPTO_PASSWORD_VTABLE.as_ref().unwrap() as *const _,
+                crypto_password2_vtable: CRYPTO_PASSWORD2_VTABLE.as_ref().unwrap() as *const _,
+                input_items,
+                ref_count: UnsafeCell::new(1),
+                password,
+                progress_callback,
+                ratio_callback,
+                file_callback,
+                password_callback,
             }
         }
     }
@@ -463,50 +556,89 @@ impl UpdateCallback {
     }
 
     unsafe extern "system" fn set_total(
-        _this: *mut IProgress,
-        _size: u64,
+        this: *mut IProgress,
+        size: u64,
     ) -> HRESULT {
-        eprintln!("[Callback] SetTotal: {}", _size);
+        let callback = Self::from_progress(this);
+        
+        // Call progress callback if registered
+        if let Some(ref progress_cb) = (*callback).progress_callback {
+            progress_cb(0, size);
+        }
+        
         0 // S_OK
     }
 
     unsafe extern "system" fn set_total_impl(
-        _this: *mut IArchiveUpdateCallback,
-        _size: u64,
+        this: *mut IArchiveUpdateCallback,
+        size: u64,
     ) -> HRESULT {
-        eprintln!("[Callback] SetTotal: {}", _size);
+        let callback = Self::from_update_callback(this);
+        
+        // Call progress callback if registered
+        if let Some(ref progress_cb) = (*callback).progress_callback {
+            progress_cb(0, size);
+        }
+        
         0 // S_OK
     }
 
     unsafe extern "system" fn set_total_impl2(
-        _this: *mut IArchiveUpdateCallback2,
-        _size: u64,
+        this: *mut IArchiveUpdateCallback2,
+        size: u64,
     ) -> HRESULT {
-        eprintln!("[Callback] SetTotal: {}", _size);
+        let callback = Self::from_update_callback2(this);
+        
+        // Call progress callback if registered
+        if let Some(ref progress_cb) = (*callback).progress_callback {
+            progress_cb(0, size);
+        }
+        
         0 // S_OK
     }
 
     unsafe extern "system" fn set_completed(
-        _this: *mut IProgress,
-        _complete_value: *const u64,
+        this: *mut IProgress,
+        complete_value: *const u64,
     ) -> HRESULT {
-        eprintln!("[Callback] SetCompleted");
+        let callback = Self::from_progress(this);
+        
+        // Call progress callback if registered
+        if let Some(ref progress_cb) = (*callback).progress_callback {
+            let completed = if !complete_value.is_null() { *complete_value } else { 0 };
+            progress_cb(completed, 0); // Total is unknown here
+        }
+        
         0 // S_OK
     }
 
     unsafe extern "system" fn set_completed_impl(
-        _this: *mut IArchiveUpdateCallback,
-        _complete_value: *const u64,
+        this: *mut IArchiveUpdateCallback,
+        complete_value: *const u64,
     ) -> HRESULT {
-        eprintln!("[Callback] SetCompleted");
+        let callback = Self::from_update_callback(this);
+        
+        // Call progress callback if registered
+        if let Some(ref progress_cb) = (*callback).progress_callback {
+            let completed = if !complete_value.is_null() { *complete_value } else { 0 };
+            progress_cb(completed, 0);
+        }
+        
         0 // S_OK
     }
 
     unsafe extern "system" fn set_completed_impl2(
-        _this: *mut IArchiveUpdateCallback2,
-        _complete_value: *const u64,
+        this: *mut IArchiveUpdateCallback2,
+        complete_value: *const u64,
     ) -> HRESULT {
-        eprintln!("[Callback] SetCompleted");
+        let callback = Self::from_update_callback2(this);
+        
+        // Call progress callback if registered
+        if let Some(ref progress_cb) = (*callback).progress_callback {
+            let completed = if !complete_value.is_null() { *complete_value } else { 0 };
+            progress_cb(completed, 0);
+        }
+
         0 // S_OK
     }
 
@@ -649,14 +781,12 @@ impl UpdateCallback {
         index: u32,
         in_stream: *mut *mut ISequentialInStream,
     ) -> HRESULT {
-        eprintln!("[Callback] GetStream: index={}", index);
-
         if in_stream.is_null() {
             return -2147467261; // E_POINTER
         }
 
         let callback = Self::from_update_callback(this);
-        
+
         // Call finalize to close any previous stream (matching bit7z behavior)
         // Note: finalize is a no-op in our implementation since streams auto-close on drop
 
@@ -668,6 +798,12 @@ impl UpdateCallback {
         }
 
         let item = &items[index as usize];
+
+        // Call file callback if registered (matching bit7z behavior)
+        if let Some(ref file_cb) = (*callback).file_callback {
+            let path_str = item.path.to_string_lossy();
+            file_cb(&path_str);
+        }
 
         // Directories don't need a stream
         if item.path.is_dir() {
@@ -681,7 +817,6 @@ impl UpdateCallback {
                 let pinned_stream = Box::new(file_stream);
                 let stream_ptr = Box::into_raw(pinned_stream);
                 *in_stream = (*stream_ptr).as_i_in_stream() as *mut ISequentialInStream;
-                eprintln!("[Callback] GetStream: created stream for {:?}", item.path);
                 0 // S_OK
             }
             Err(e) => {
@@ -772,6 +907,21 @@ impl UpdateCallback {
         }
 
         let callback = Self::from_crypto_password2(this);
+        
+        // Try to get password from callback first
+        if let Some(ref password_cb) = (*callback).password_callback {
+            if let Some(pwd) = password_cb() {
+                *password_is_defined = 1;
+                let bstr = alloc_bstr_from_utf32(&pwd);
+                if bstr.is_null() {
+                    return -2147467259; // E_FAIL
+                }
+                *password = bstr;
+                return 0; // S_OK
+            }
+        }
+        
+        // Fall back to stored password
         if let Some(ref pwd) = (*callback).password {
             *password_is_defined = 1; // true - password is defined
 
@@ -850,11 +1000,19 @@ impl UpdateCallback {
     }
 
     unsafe extern "system" fn set_ratio_info(
-        _this: *mut ICompressProgressInfo,
-        _in_size: *const u64,
-        _out_size: *const u64,
+        this: *mut ICompressProgressInfo,
+        in_size: *const u64,
+        out_size: *const u64,
     ) -> HRESULT {
-        // Progress reporting not implemented
+        let callback = Self::from_compress_progress(this);
+        
+        // Call ratio callback if registered
+        if let Some(ref ratio_cb) = (*callback).ratio_callback {
+            let in_val = if !in_size.is_null() { *in_size } else { 0 };
+            let out_val = if !out_size.is_null() { *out_size } else { 0 };
+            ratio_cb(in_val, out_val);
+        }
+        
         0 // S_OK
     }
 }

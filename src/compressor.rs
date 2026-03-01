@@ -24,6 +24,7 @@ pub struct BitCompressor<'a> {
     dictionary_size: Option<u32>,
     word_size: Option<u32>,
     solid: bool,
+    crypt_headers: bool,
 }
 
 impl<'a> BitCompressor<'a> {
@@ -38,6 +39,7 @@ impl<'a> BitCompressor<'a> {
             dictionary_size: None,
             word_size: None,
             solid: false,
+            crypt_headers: false,
         }
     }
 
@@ -74,6 +76,12 @@ impl<'a> BitCompressor<'a> {
     /// Enable solid compression
     pub fn solid(&mut self, solid: bool) -> &mut Self {
         self.solid = solid;
+        self
+    }
+
+    /// Enable header encryption (7z format only)
+    pub fn crypt_headers(&mut self, encrypt: bool) -> &mut Self {
+        self.crypt_headers = encrypt;
         self
     }
 
@@ -208,15 +216,9 @@ impl<'a> BitCompressor<'a> {
 
     /// Set archive properties (compression level, method, etc.)
     unsafe fn set_archive_properties(&self, archive: *mut IOutArchive) -> Result<()> {
-        // TODO: Implement proper property setting
-        // For now, skip property setting to avoid crashes
-        // The 7-Zip library will use default properties
-        Ok(())
-        
-        /*
         use crate::ffi::{ISetProperties, IID_ISetProperties, PROPVARIANT, VARENUM};
-        use crate::ffi::variant::alloc_bstr_from_utf32;
-        
+        use crate::ffi::variant::{alloc_bstr_from_utf32, free_bstr};
+
         // Try to get ISetProperties interface
         let mut set_props_ptr: *mut std::ffi::c_void = ptr::null_mut();
         let iid = IID_ISetProperties;
@@ -232,46 +234,125 @@ impl<'a> BitCompressor<'a> {
 
         if result != 0 || set_props_ptr.is_null() {
             // ISetProperties not supported, skip property setting
+            // This is OK - some formats don't support custom properties
             return Ok(());
         }
 
         let set_properties: *mut ISetProperties = set_props_ptr as *mut ISetProperties;
 
         // Build property names and values
-        // For now, only set compression level ("x" property)
         let mut prop_names: Vec<*const u16> = Vec::new();
         let mut prop_values: Vec<PROPVARIANT> = Vec::new();
 
-        // Add compression level property
-        let level_name = alloc_bstr_from_utf32("x");
-        if !level_name.is_null() {
-            prop_names.push(level_name);
-            
-            let mut level_value = PROPVARIANT::default();
-            level_value.vt = VARENUM::VT_UI4 as u16;
-            level_value.data[0] = self.compression_level.to_value() as u8;
-            level_value.data[1] = 0;
-            level_value.data[2] = 0;
-            level_value.data[3] = 0;
-            prop_values.push(level_value);
+        // Add compression level property ("x")
+        {
+            let name_bstr = alloc_bstr_from_utf32("x");
+            if !name_bstr.is_null() {
+                prop_names.push(name_bstr);
+                let mut prop_value = PROPVARIANT::default();
+                prop_value.vt = VARENUM::VT_UI4 as u16;
+                let value = self.compression_level.to_value();
+                prop_value.data[0] = (value & 0xFF) as u8;
+                prop_value.data[1] = ((value >> 8) & 0xFF) as u8;
+                prop_value.data[2] = ((value >> 16) & 0xFF) as u8;
+                prop_value.data[3] = ((value >> 24) & 0xFF) as u8;
+                prop_values.push(prop_value);
+            }
         }
 
-        // Call SetProperties
+        // Add compression method property ("m") if specified
+        if let Some(method) = self.compression_method {
+            let method_str = method.to_string();
+            let name_bstr = alloc_bstr_from_utf32("m");
+            if !name_bstr.is_null() {
+                let value_bstr = alloc_bstr_from_utf32(&method_str);
+                if !value_bstr.is_null() {
+                    prop_names.push(name_bstr);
+                    let mut prop_value = PROPVARIANT::default();
+                    prop_value.vt = VARENUM::VT_BSTR as u16;
+                    let data_ptr = prop_value.data.as_mut_ptr() as *mut *mut u16;
+                    *data_ptr = value_bstr;
+                    prop_values.push(prop_value);
+                } else {
+                    free_bstr(name_bstr as *mut u16);
+                }
+            }
+        }
+
+        // Add dictionary size property ("d") if specified
+        if let Some(size) = self.dictionary_size {
+            let name_bstr = alloc_bstr_from_utf32("d");
+            if !name_bstr.is_null() {
+                prop_names.push(name_bstr);
+                let mut prop_value = PROPVARIANT::default();
+                prop_value.vt = VARENUM::VT_UI4 as u16;
+                prop_value.data[0] = (size & 0xFF) as u8;
+                prop_value.data[1] = ((size >> 8) & 0xFF) as u8;
+                prop_value.data[2] = ((size >> 16) & 0xFF) as u8;
+                prop_value.data[3] = ((size >> 24) & 0xFF) as u8;
+                prop_values.push(prop_value);
+            }
+        }
+
+        // Add word size property ("w") if specified
+        if let Some(size) = self.word_size {
+            let name_bstr = alloc_bstr_from_utf32("w");
+            if !name_bstr.is_null() {
+                prop_names.push(name_bstr);
+                let mut prop_value = PROPVARIANT::default();
+                prop_value.vt = VARENUM::VT_UI4 as u16;
+                prop_value.data[0] = (size & 0xFF) as u8;
+                prop_value.data[1] = ((size >> 8) & 0xFF) as u8;
+                prop_value.data[2] = ((size >> 16) & 0xFF) as u8;
+                prop_value.data[3] = ((size >> 24) & 0xFF) as u8;
+                prop_values.push(prop_value);
+            }
+        }
+
+        // Add solid compression property ("s") if enabled
+        if self.solid {
+            let name_bstr = alloc_bstr_from_utf32("s");
+            if !name_bstr.is_null() {
+                prop_names.push(name_bstr);
+                let mut prop_value = PROPVARIANT::default();
+                prop_value.vt = VARENUM::VT_BOOL as u16;
+                // BOOL: true = -1 (0xFFFF), false = 0
+                prop_value.data[0] = 0xFF;
+                prop_value.data[1] = 0xFF;
+                prop_values.push(prop_value);
+            }
+        }
+
+        // Add header encryption property ("hc") if enabled (7z only)
+        if self.crypt_headers && matches!(self.format, CompressionFormat::SevenZip) {
+            let name_bstr = alloc_bstr_from_utf32("hc");
+            if !name_bstr.is_null() {
+                prop_names.push(name_bstr);
+                let mut prop_value = PROPVARIANT::default();
+                prop_value.vt = VARENUM::VT_BOOL as u16;
+                prop_value.data[0] = 0xFF;
+                prop_value.data[1] = 0xFF;
+                prop_values.push(prop_value);
+            }
+        }
+
+        // Call SetProperties if we have any properties
         if !prop_names.is_empty() && !prop_values.is_empty() {
             let set_vtable = &*(*set_properties).vtable;
             let names_ptr = prop_names.as_ptr();
             let values_ptr = prop_values.as_ptr();
             let num_props = prop_names.len() as u32;
-            
+
             let set_result = (set_vtable.set_properties)(
                 set_properties,
                 names_ptr,
                 values_ptr as *const *const std::ffi::c_void,
                 num_props,
             );
-            
-            if set_result != 0 {
+
+            if set_result != 0 && set_result != 1 {
                 eprintln!("[WARN] SetProperties returned 0x{:X}", set_result);
+                // Don't fail - some formats may not support all properties
             }
         }
 
@@ -279,13 +360,22 @@ impl<'a> BitCompressor<'a> {
         let set_vtable = &*(*set_properties).vtable;
         (set_vtable.base.release)(set_properties as *mut IUnknown);
 
-        // Free allocated BSTRs
+        // Free allocated BSTRs (property names)
         for name in prop_names {
-            crate::ffi::variant::free_bstr(name as *mut u16);
+            free_bstr(name as *mut u16);
         }
-        // PROPVARIANT values don't own the BSTR, so don't free them here
+        
+        // Free BSTRs in property values (VT_BSTR only)
+        for value in prop_values {
+            if value.vt == VARENUM::VT_BSTR as u16 {
+                let data_ptr = value.data.as_ptr() as *const *const u16;
+                let bstr = *data_ptr;
+                if !bstr.is_null() {
+                    free_bstr(bstr as *mut u16);
+                }
+            }
+        }
 
         Ok(())
-        */
     }
 }
