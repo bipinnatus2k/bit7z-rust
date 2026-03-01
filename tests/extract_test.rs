@@ -786,7 +786,7 @@ fn test_archive_reader_zip() {
             return;
         }
     };
-    
+
     let lib = match BitLibrary::new(Some(lib_path.as_str())) {
         Ok(l) => l,
         Err(e) => {
@@ -794,31 +794,31 @@ fn test_archive_reader_zip() {
             return;
         }
     };
-    
+
     let temp_dir = TempDir::new().expect("创建临时目录失败");
     let archive_path = temp_dir.path().join("test.zip");
-    
+
     if create_test_zip(&archive_path).is_err() {
         eprintln!("跳过测试：无法创建 ZIP 测试档案");
         return;
     }
-    
+
     let mut reader = BitArchiveReader::new(&lib, ExtractFormat::Zip);
     let open_result = reader.open(&archive_path);
-    
+
     assert!(open_result.is_ok(), "打开档案失败：{:?}", open_result.err());
-    
+
     // 测试获取项目数量
     let count = reader.items_count().expect("获取项目数量失败");
     assert!(count > 0, "项目数量应为正数");
-    
+
     // 测试获取所有项目
     let items = reader.items().expect("获取项目列表失败");
     assert!(!items.is_empty(), "项目列表不应为空");
-    
+
     // 测试档案属性
     let props = reader.archive_properties().expect("获取档案属性失败");
-    println!("ZIP 档案属性：文件数={}, 文件夹数={}, 大小={} 字节", 
+    println!("ZIP 档案属性：文件数={}, 文件夹数={}, 大小={} 字节",
              props.files_count, props.folders_count, props.size);
 }
 
