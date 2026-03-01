@@ -368,10 +368,10 @@ impl<'a> BitCompressor<'a> {
         // Free BSTRs in property values (VT_BSTR only)
         for value in prop_values {
             if value.vt == VARENUM::VT_BSTR as u16 {
-                let data_ptr = value.data.as_ptr() as *const *const u16;
-                let bstr = *data_ptr;
-                if !bstr.is_null() {
-                    free_bstr(bstr as *mut u16);
+                // Use read_unaligned to avoid alignment issues
+                let bstr_ptr = std::ptr::read_unaligned(value.data.as_ptr() as *const *const u16);
+                if !bstr_ptr.is_null() {
+                    free_bstr(bstr_ptr as *mut u16);
                 }
             }
         }
