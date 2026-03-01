@@ -478,11 +478,50 @@ impl ExtractCallback {
     }
 
     unsafe extern "system" fn query_interface(
-        _this: *mut crate::ffi::IUnknown,
-        _iid: *const crate::ffi::GUID,
-        _out: *mut *mut c_void,
+        this: *mut crate::ffi::IUnknown,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
     ) -> HRESULT {
-        -1
+        if out.is_null() || iid.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
+        let callback = this as *mut ExtractCallback;
+        
+        // IID_IUnknown
+        let iid_iunknown = crate::ffi::IID_IUnknown;
+        if *iid == iid_iunknown {
+            *out = this as *mut c_void;
+            ExtractCallback::add_ref(this);
+            return 0; // S_OK
+        }
+
+        // IID_IProgress (IArchiveExtractCallback inherits from IProgress)
+        let iid_progress = crate::ffi::IID_IProgress;
+        if *iid == iid_progress {
+            *out = this as *mut c_void;
+            ExtractCallback::add_ref(this);
+            return 0; // S_OK
+        }
+
+        // IID_IArchiveExtractCallback
+        let iid_extract_callback = crate::ffi::IID_IArchiveExtractCallback;
+        if *iid == iid_extract_callback {
+            *out = this as *mut c_void;
+            ExtractCallback::add_ref(this);
+            return 0; // S_OK
+        }
+
+        // IID_ICryptoGetTextPassword (for password-protected archives)
+        let iid_crypto = crate::ffi::IID_ICryptoGetTextPassword;
+        if *iid == iid_crypto {
+            *out = callback as *mut c_void;
+            ExtractCallback::add_ref(this);
+            return 0; // S_OK
+        }
+
+        *out = ptr::null_mut();
+        -2147467262 // E_NOINTERFACE
     }
 
     unsafe extern "system" fn add_ref(this: *mut crate::ffi::IUnknown) -> u32 {
@@ -525,6 +564,17 @@ impl ExtractCallback {
         out_stream: *mut *mut ISequentialOutStream,
         ask_extract_mode: *mut i32,
     ) -> HRESULT {
+        if out_stream.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
+        *out_stream = ptr::null_mut();
+        
+        // ask_extract_mode may be NULL for some formats
+        if !ask_extract_mode.is_null() {
+            *ask_extract_mode = 0; // kExtract = 0
+        }
+
         let callback = &*(this as *const ExtractCallback);
         let archive_vtable = unsafe { &*(*callback.archive).vtable };
 
@@ -538,8 +588,6 @@ impl ExtractCallback {
         );
 
         if result != 0 {
-            *ask_extract_mode = 0; // kExtract = 0
-            *out_stream = ptr::null_mut();
             return 0; // S_OK, but skip
         }
 
@@ -571,8 +619,6 @@ impl ExtractCallback {
                         eprintln!("Path validation failed for directory: {}", e);
                     }
                 }
-                *ask_extract_mode = 0;
-                *out_stream = ptr::null_mut();
                 return 0;
             }
         }
@@ -582,8 +628,6 @@ impl ExtractCallback {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("Path validation failed: {}", e);
-                *ask_extract_mode = 0;
-                *out_stream = ptr::null_mut();
                 return 0;
             }
         };
@@ -591,8 +635,6 @@ impl ExtractCallback {
         if let Some(parent) = output_path.parent() {
             if let Err(e) = fs::create_dir_all(parent) {
                 eprintln!("Failed to create parent directory {}: {}", parent.display(), e);
-                *ask_extract_mode = 0;
-                *out_stream = ptr::null_mut();
                 return 0;
             }
         }
@@ -606,16 +648,10 @@ impl ExtractCallback {
                     *callback.current_out_stream.get() = Some(*out_stream);
                     *callback.current_path.get() = Some(path.clone());
                 }
-                if !ask_extract_mode.is_null() {
-                    *ask_extract_mode = 0;
-                }
                 0
             }
             Err(e) => {
                 eprintln!("Failed to create output stream for {}: {}", output_path.display(), e);
-                if !ask_extract_mode.is_null() {
-                    *ask_extract_mode = 0;
-                }
                 *out_stream = ptr::null_mut();
                 0
             }

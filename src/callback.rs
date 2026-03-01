@@ -1,4 +1,10 @@
 //! Common callback implementations for 7-Zip operations
+//!
+//! OpenCallback implements multiple interfaces:
+//! - IArchiveOpenCallback
+//! - IArchiveOpenVolumeCallback  
+//! - IArchiveOpenSetSubArchiveName
+//! - ICryptoGetTextPassword
 
 use crate::ffi::{
     IArchiveOpenCallback, IArchiveOpenVolumeCallback, IArchiveOpenSetSubArchiveName,
@@ -11,61 +17,74 @@ use crate::ffi::variant::alloc_bstr_from_utf32;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::ptr;
 
 /// Open callback for 7-Zip archive opening
-/// Uses a single vtable containing all interface methods
+/// Memory layout: vtable must be first to match C++ COM object layout
 #[repr(C)]
 pub struct OpenCallback {
-    base_vtable: *const c_void,  // Points to a unified vtable
+    vtable: Pin<Box<OpenCallbackVTable>>,
     archive_path: PathBuf,
     ref_count: UnsafeCell<u32>,
 }
 
-// Unified vtable structure containing all interface methods
+/// Unified vtable structure containing all interface methods
+/// This matches bit7z's multi-interface inheritance pattern
+#[repr(C)]
 struct OpenCallbackVTable {
-    // IUnknown
-    query_interface: unsafe extern "system" fn(*mut IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
-    add_ref: unsafe extern "system" fn(*mut IUnknown) -> u32,
-    release: unsafe extern "system" fn(*mut IUnknown) -> u32,
-    // IArchiveOpenCallback
-    set_completed: unsafe extern "system" fn(*mut IArchiveOpenCallback, *const u64, *const u64) -> HRESULT,
-    set_total: unsafe extern "system" fn(*mut IArchiveOpenCallback, *const u64, *const u64) -> HRESULT,
-    // IArchiveOpenVolumeCallback
-    get_property: unsafe extern "system" fn(*mut IArchiveOpenVolumeCallback, u32, *mut PROPVARIANT) -> HRESULT,
-    get_stream: unsafe extern "system" fn(*mut IArchiveOpenVolumeCallback, *const u16, *mut *mut IInStream) -> HRESULT,
-    // IArchiveOpenSetSubArchiveName
-    set_sub_archive_name: unsafe extern "system" fn(*mut IArchiveOpenSetSubArchiveName, *const u16) -> HRESULT,
-    // ICryptoGetTextPassword
-    get_text_password: unsafe extern "system" fn(*mut ICryptoGetTextPassword, *mut *mut u16) -> HRESULT,
-}
-
-static mut OPEN_CALLBACK_VTABLE: Option<OpenCallbackVTable> = None;
-
-fn init_vtable() -> *const OpenCallbackVTable {
-    unsafe {
-        if OPEN_CALLBACK_VTABLE.is_none() {
-            OPEN_CALLBACK_VTABLE = Some(OpenCallbackVTable {
-                query_interface: OpenCallback::query_interface,
-                add_ref: OpenCallback::add_ref,
-                release: OpenCallback::release,
-                set_completed: OpenCallback::set_completed,
-                set_total: OpenCallback::set_total,
-                get_property: OpenCallback::get_property,
-                get_stream: OpenCallback::get_stream,
-                set_sub_archive_name: OpenCallback::set_sub_archive_name,
-                get_text_password: OpenCallback::get_text_password,
-            });
-        }
-        OPEN_CALLBACK_VTABLE.as_ref().unwrap() as *const _
-    }
+    // IArchiveOpenCallback vtable (includes IUnknown base)
+    open_callback_vtable: crate::ffi::IArchiveOpenCallbackVTable,
+    // IArchiveOpenVolumeCallback vtable
+    volume_callback_vtable: crate::ffi::IArchiveOpenVolumeCallbackVTable,
+    // IArchiveOpenSetSubArchiveName vtable
+    set_name_vtable: crate::ffi::IArchiveOpenSetSubArchiveNameVTable,
+    // ICryptoGetTextPassword vtable
+    crypto_vtable: crate::ffi::ICryptoGetTextPasswordVTable,
 }
 
 impl OpenCallback {
     /// Create a new OpenCallback for the given archive path
     pub fn new(archive_path: &Path) -> Self {
+        let vtable = Box::pin(OpenCallbackVTable {
+            open_callback_vtable: crate::ffi::IArchiveOpenCallbackVTable {
+                base: crate::ffi::IUnknownVTable {
+                    query_interface: Self::query_interface,
+                    add_ref: Self::add_ref,
+                    release: Self::release,
+                },
+                set_completed: Self::set_completed,
+                set_total: Self::set_total,
+            },
+            volume_callback_vtable: crate::ffi::IArchiveOpenVolumeCallbackVTable {
+                base: crate::ffi::IUnknownVTable {
+                    query_interface: Self::query_interface,
+                    add_ref: Self::add_ref,
+                    release: Self::release,
+                },
+                get_property: Self::get_property,
+                get_stream: Self::get_stream_volume,
+            },
+            set_name_vtable: crate::ffi::IArchiveOpenSetSubArchiveNameVTable {
+                base: crate::ffi::IUnknownVTable {
+                    query_interface: Self::query_interface,
+                    add_ref: Self::add_ref,
+                    release: Self::release,
+                },
+                set_sub_archive_name: Self::set_sub_archive_name,
+            },
+            crypto_vtable: crate::ffi::ICryptoGetTextPasswordVTable {
+                base: crate::ffi::IUnknownVTable {
+                    query_interface: Self::query_interface,
+                    add_ref: Self::add_ref,
+                    release: Self::release,
+                },
+                crypto_get_text_password: Self::get_text_password,
+            },
+        });
+
         OpenCallback {
-            base_vtable: init_vtable() as *const c_void,
+            vtable,
             archive_path: archive_path.to_path_buf(),
             ref_count: UnsafeCell::new(1),
         }
@@ -187,7 +206,7 @@ impl OpenCallback {
         0 // S_OK - return empty property for other props
     }
 
-    unsafe extern "system" fn get_stream(
+    unsafe extern "system" fn get_stream_volume(
         _this: *mut IArchiveOpenVolumeCallback,
         _name: *const u16,
         _in_stream: *mut *mut IInStream,
