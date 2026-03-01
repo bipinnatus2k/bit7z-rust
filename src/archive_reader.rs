@@ -49,6 +49,9 @@ pub struct BitArchiveReader<'a> {
     library: &'a BitLibrary,
     format: ExtractFormat,
     archive: Option<*mut IInArchive>,
+    // Store leaked pointers for proper cleanup in Drop
+    _in_stream: Option<*mut crate::stream::FileStream>,
+    _open_callback: Option<*mut OpenCallback>,
 }
 
 impl<'a> BitArchiveReader<'a> {
@@ -58,6 +61,8 @@ impl<'a> BitArchiveReader<'a> {
             library,
             format,
             archive: None,
+            _in_stream: None,
+            _open_callback: None,
         }
     }
 
@@ -67,27 +72,31 @@ impl<'a> BitArchiveReader<'a> {
             let archive_ptr = self.library.create_in_archive(&self.format.guid())?;
 
             // Create input stream for archive file
-            let in_stream = Box::leak(Box::new(
-                crate::stream::FileStream::new(archive_path.as_ref())?
-            ));
+            let in_stream = Box::new(crate::stream::FileStream::new(archive_path.as_ref())?);
+            let in_stream_ptr = Box::into_raw(in_stream);
 
             // max_check_start_position pointer (null means use default)
             // For some formats like TAR, this needs to be null or they fail to open
-            let max_check_start_position: *const u64 = std::ptr::null();
+            // Try with 0 instead of null for ZIP format
+            let max_check_start_position: u64 = 0;
 
             // Create open callback (required for proper archive opening)
-            let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
+            let open_callback = Box::new(OpenCallback::new(archive_path.as_ref()));
+            let open_callback_ptr = Box::into_raw(open_callback);
 
-            // Open archive
+            // Open archive - pass max_check_start_position as pointer
             let result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
-                in_stream.as_i_in_stream(),
-                max_check_start_position,
-                open_callback.as_i_archive_open_callback(),
+                (*in_stream_ptr).as_i_in_stream(),
+                &max_check_start_position,  // Pass as pointer (0 means search from beginning)
+                (*open_callback_ptr).as_i_archive_open_callback(),
             );
 
             // S_OK (0) and S_FALSE (1) are both success for some formats
             if result != 0 && result != 1 {
+                // Clean up on failure
+                drop(Box::from_raw(in_stream_ptr));
+                drop(Box::from_raw(open_callback_ptr));
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", result
                 )));
@@ -99,8 +108,20 @@ impl<'a> BitArchiveReader<'a> {
                 archive_ptr.as_ptr(),
                 &mut num_items,
             );
+            
+            // For some formats (like ZIP), the first call to get_number_of_items may return 0.
+            // Try again if first call returns 0.
+            if num_items == 0 {
+                let count_result2 = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
+                    archive_ptr.as_ptr(),
+                    &mut num_items,
+                );
+                let _ = count_result2; // Ignore second result code
+            }
 
             self.archive = Some(archive_ptr.as_ptr());
+            self._in_stream = Some(in_stream_ptr);
+            self._open_callback = Some(open_callback_ptr);
             Ok(())
         }
     }
@@ -389,6 +410,22 @@ impl<'a> Drop for BitArchiveReader<'a> {
         if let Some(archive) = self.archive {
             unsafe {
                 let _ = ((*(*archive).vtable).close)(archive);
+                // Note: The IInArchive interface should be released by calling Release
+                // on the pointer, but we don't have direct access to it here since
+                // it's managed by the library's create_in_archive function.
+            }
+        }
+        
+        // Clean up the leaked stream and callback
+        if let Some(in_stream_ptr) = self._in_stream {
+            unsafe {
+                drop(Box::from_raw(in_stream_ptr));
+            }
+        }
+        
+        if let Some(open_callback_ptr) = self._open_callback {
+            unsafe {
+                drop(Box::from_raw(open_callback_ptr));
             }
         }
     }

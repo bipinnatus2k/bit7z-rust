@@ -36,6 +36,9 @@ pub mod compress_callback;
 pub mod output_archive;
 pub mod format_detect;
 
+#[cfg(feature = "vtable_impl")]
+pub mod vtable_callback;
+
 pub use ffi::BitLibrary;
 pub use ffi::LibraryError;
 

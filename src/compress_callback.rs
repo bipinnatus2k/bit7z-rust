@@ -743,8 +743,9 @@ impl UpdateCallback {
                 }
 
                 (*value).vt = 8; // VT_BSTR
+                // Use write_unaligned to avoid alignment issues
                 let data_ptr = (*value).data.as_mut_ptr() as *mut *mut u16;
-                *data_ptr = bstr;
+                std::ptr::write_unaligned(data_ptr, bstr);
             }
             PROPID::IsDir => {
                 let is_dir = item.path.is_dir();
@@ -758,8 +759,9 @@ impl UpdateCallback {
                     if let Ok(metadata) = std::fs::metadata(&item.path) {
                         let size = metadata.len();
                         (*value).vt = 21; // VT_UI8
+                        // Use write_unaligned to avoid alignment issues
                         let data_ptr = (*value).data.as_mut_ptr() as *mut u64;
-                        *data_ptr = size;
+                        std::ptr::write_unaligned(data_ptr, size);
                     }
                 }
             }

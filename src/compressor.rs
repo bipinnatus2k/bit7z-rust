@@ -270,8 +270,9 @@ impl<'a> BitCompressor<'a> {
                     prop_names.push(name_bstr);
                     let mut prop_value = PROPVARIANT::default();
                     prop_value.vt = VARENUM::VT_BSTR as u16;
+                    // Use write_unaligned to avoid alignment issues
                     let data_ptr = prop_value.data.as_mut_ptr() as *mut *mut u16;
-                    *data_ptr = value_bstr;
+                    std::ptr::write_unaligned(data_ptr, value_bstr);
                     prop_values.push(prop_value);
                 } else {
                     free_bstr(name_bstr as *mut u16);

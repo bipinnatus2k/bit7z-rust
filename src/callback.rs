@@ -177,8 +177,9 @@ impl OpenCallback {
             (*value).wReserved2 = 0;
             (*value).wReserved3 = 0;
             // Write BSTR pointer to data array (first 8 bytes on 64-bit)
+            // Use write_unaligned to avoid alignment issues
             let data_ptr = (*value).data.as_mut_ptr() as *mut *mut u16;
-            *data_ptr = bstr as *mut u16;
+            std::ptr::write_unaligned(data_ptr, bstr as *mut u16);
 
             return 0; // S_OK
         }
