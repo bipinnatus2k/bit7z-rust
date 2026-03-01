@@ -140,19 +140,21 @@ struct UpdateCallback {
 impl UpdateCallback {
     fn new(items: Vec<UpdateItem>, password: Option<String>) -> Self {
         let vtable = Box::pin(crate::ffi::IArchiveUpdateCallbackVTable {
-            base: crate::ffi::IUnknownVTable {
-                query_interface: Self::query_interface,
-                add_ref: Self::add_ref,
-                release: Self::release,
+            base: crate::ffi::IProgressVTable {
+                base: crate::ffi::IUnknownVTable {
+                    query_interface: Self::query_interface,
+                    add_ref: Self::add_ref,
+                    release: Self::release,
+                },
+                set_completed: Self::set_completed,
+                set_total: Self::set_total,
             },
-            set_total: Self::set_total,
-            set_completed: Self::set_completed,
             get_update_item_info: Self::get_update_item_info,
             get_property: Self::get_property,
             get_stream: Self::get_stream,
             set_operation_result: Self::set_operation_result,
         });
-        
+
         UpdateCallback {
             items,
             password,
@@ -195,14 +197,14 @@ impl UpdateCallback {
     }
     
     unsafe extern "system" fn set_total(
-        _this: *mut crate::ffi::IArchiveUpdateCallback,
+        _this: *mut crate::ffi::IProgress,
         _size: u64,
     ) -> HRESULT {
         0 // S_OK
     }
-    
+
     unsafe extern "system" fn set_completed(
-        _this: *mut crate::ffi::IArchiveUpdateCallback,
+        _this: *mut crate::ffi::IProgress,
         _complete_value: *const u64,
     ) -> HRESULT {
         0 // S_OK

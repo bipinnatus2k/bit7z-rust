@@ -1,5 +1,5 @@
 //! Archive reader for reading archive metadata
-//! 
+//!
 //! This module provides BitArchiveReader for reading metadata from archives
 //! without extracting them.
 
@@ -16,9 +16,8 @@ use crate::ffi::{
     propvariant_to_u64, propvariant_to_u32,
     propvariant_to_filetime,
 };
+use crate::callback::OpenCallback;
 use std::path::Path;
-
-/// Archive item metadata
 #[derive(Debug, Clone)]
 pub struct ArchiveItem {
     /// Item index in the archive
@@ -72,22 +71,34 @@ impl<'a> BitArchiveReader<'a> {
                 crate::stream::FileStream::new(archive_path.as_ref())?
             ));
 
-            // max_check_start_position pointer (0 means search from beginning)
-            let max_check_start_position: u64 = 0;
+            // max_check_start_position pointer (null means use default)
+            // For some formats like TAR, this needs to be null or they fail to open
+            let max_check_start_position: *const u64 = std::ptr::null();
+
+            // Create open callback (required for proper archive opening)
+            let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
 
             // Open archive
             let result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
                 in_stream.as_i_in_stream(),
-                &max_check_start_position,  // Pass as pointer
-                std::ptr::null_mut(), // open_callback (optional for reading)
+                max_check_start_position,
+                open_callback.as_i_archive_open_callback(),
             );
 
-            if result != 0 {
+            // S_OK (0) and S_FALSE (1) are both success for some formats
+            if result != 0 && result != 1 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", result
                 )));
             }
+
+            // Check number of items after opening
+            let mut num_items: u32 = 0;
+            let count_result = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
+                archive_ptr.as_ptr(),
+                &mut num_items,
+            );
 
             self.archive = Some(archive_ptr.as_ptr());
             Ok(())

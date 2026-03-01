@@ -9,7 +9,6 @@
 use crate::ffi::{
     IInStream, IInStreamVTable, IOutStream, IOutStreamVTable,
     ISequentialInStream, ISequentialOutStream, IUnknown, IUnknownVTable,
-    IStreamGetSize, IStreamGetSizeVTable, IStreamGetProps, IStreamGetPropsVTable,
     SEEK_CUR, SEEK_END, SEEK_SET,
 };
 use crate::error::Result;
@@ -21,15 +20,14 @@ use std::path::Path;
 use std::pin::Pin;
 use std::ptr::{self, write_unaligned};
 
-/// Wrapper for File that implements IInStream and IStreamGetSize
+/// Wrapper for File that implements IInStream
 ///
 /// Memory layout: vtable must be first to match C++ COM object layout
-/// We use a single combined vtable for all interfaces
+/// Note: We don't implement IStreamGetSize/IStreamGetProps as separate interfaces
+/// to avoid COM pointer issues. 7-Zip can work without these interfaces for most formats.
 #[repr(C)]
 pub struct FileStream {
     vtable: Pin<Box<IInStreamVTable>>,
-    get_size_vtable: Pin<Box<IStreamGetSizeVTable>>,
-    get_props_vtable: Pin<Box<IStreamGetPropsVTable>>,
     ref_count: UnsafeCell<u32>,
     file: File,
 }
@@ -50,28 +48,8 @@ impl FileStream {
             seek: Self::seek,
         });
 
-        let get_size_vtable = Box::pin(IStreamGetSizeVTable {
-            base: IUnknownVTable {
-                query_interface: Self::query_interface_get_size,
-                add_ref: Self::add_ref,
-                release: Self::release,
-            },
-            get_size: Self::get_size,
-        });
-
-        let get_props_vtable = Box::pin(IStreamGetPropsVTable {
-            base: IUnknownVTable {
-                query_interface: Self::query_interface_get_props,
-                add_ref: Self::add_ref,
-                release: Self::release,
-            },
-            get_props: Self::get_props,
-        });
-
         Ok(FileStream {
             vtable,
-            get_size_vtable,
-            get_props_vtable,
             ref_count: UnsafeCell::new(1),
             file,
         })
@@ -79,14 +57,6 @@ impl FileStream {
 
     pub fn as_i_in_stream(&self) -> *mut IInStream {
         self as *const FileStream as *mut FileStream as *mut IInStream
-    }
-
-    pub fn as_i_stream_get_size(&self) -> *mut IStreamGetSize {
-        self as *const FileStream as *mut FileStream as *mut IStreamGetSize
-    }
-
-    pub fn as_i_stream_get_props(&self) -> *mut IStreamGetProps {
-        self as *const FileStream as *mut FileStream as *mut IStreamGetProps
     }
     
     unsafe extern "system" fn query_interface(
@@ -122,187 +92,10 @@ impl FileStream {
             return 0; // S_OK
         }
 
-        // IID_IStreamGetSize - return the get_size vtable pointer
-        let iid_get_size = crate::ffi::IID_IStreamGetSize;
-        if *iid == iid_get_size {
-            let stream = this as *mut FileStream;
-            let vtable_ptr = &*(*stream).get_size_vtable as *const IStreamGetSizeVTable;
-            *out = vtable_ptr as *mut c_void;
-            FileStream::add_ref(this);
-            return 0; // S_OK
-        }
-
-        // IID_IStreamGetProps - return the get_props vtable pointer
-        let iid_get_props = crate::ffi::IID_IStreamGetProps;
-        if *iid == iid_get_props {
-            let stream = this as *mut FileStream;
-            let vtable_ptr = &*(*stream).get_props_vtable as *const IStreamGetPropsVTable;
-            *out = vtable_ptr as *mut c_void;
-            FileStream::add_ref(this);
-            return 0; // S_OK
-        }
-
+        // IStreamGetSize and IStreamGetProps are not supported
+        // This matches bit7z's CStdInStream implementation
         *out = ptr::null_mut();
         -2147467262 // E_NOINTERFACE
-    }
-
-    // Separate query_interface for IStreamGetSize vtable
-    // Returns the main IUnknown pointer for proper reference counting
-    unsafe extern "system" fn query_interface_get_size(
-        this: *mut IUnknown,
-        iid: *const crate::ffi::GUID,
-        out: *mut *mut c_void,
-    ) -> crate::ffi::HRESULT {
-        if out.is_null() || iid.is_null() {
-            return -2147467261; // E_POINTER
-        }
-
-        let iid_iunknown = crate::ffi::IID_IUnknown;
-        let iid_get_size = crate::ffi::IID_IStreamGetSize;
-        
-        // For IUnknown or IStreamGetSize, return the get_size interface
-        if *iid == iid_iunknown || *iid == iid_get_size {
-            let stream = this as *mut FileStream;
-            let vtable_ptr = &*(*stream).get_size_vtable as *const IStreamGetSizeVTable;
-            *out = vtable_ptr as *mut c_void;
-            FileStream::add_ref(this);
-            return 0; // S_OK
-        }
-
-        // For other interfaces, delegate to main query_interface
-        FileStream::query_interface(this, iid, out)
-    }
-
-    // Separate query_interface for IStreamGetProps vtable
-    // Returns the main IUnknown pointer for proper reference counting
-    unsafe extern "system" fn query_interface_get_props(
-        this: *mut IUnknown,
-        iid: *const crate::ffi::GUID,
-        out: *mut *mut c_void,
-    ) -> crate::ffi::HRESULT {
-        if out.is_null() || iid.is_null() {
-            return -2147467261; // E_POINTER
-        }
-
-        let iid_iunknown = crate::ffi::IID_IUnknown;
-        let iid_get_props = crate::ffi::IID_IStreamGetProps;
-
-        // For IUnknown or IStreamGetProps, return the get_props interface
-        if *iid == iid_iunknown || *iid == iid_get_props {
-            let stream = this as *mut FileStream;
-            let vtable_ptr = &*(*stream).get_props_vtable as *const IStreamGetPropsVTable;
-            *out = vtable_ptr as *mut c_void;
-            FileStream::add_ref(this);
-            return 0; // S_OK
-        }
-
-        // For other interfaces, delegate to main query_interface
-        FileStream::query_interface(this, iid, out)
-    }
-
-    unsafe extern "system" fn get_props(
-        this: *mut IStreamGetProps,
-        size: *mut u64,
-        c_time: *mut c_void,
-        a_time: *mut c_void,
-        m_time: *mut c_void,
-        attrib: *mut u32,
-    ) -> crate::ffi::HRESULT {
-        let stream = this as *mut FileStream;
-        let file = &mut (*stream).file;
-
-        // Get file metadata
-        match file.metadata() {
-            Ok(metadata) => {
-                // Get size
-                if !size.is_null() {
-                    write_unaligned(size, metadata.len());
-                }
-
-                // Get modification time
-                if !m_time.is_null() {
-                    use std::os::unix::fs::MetadataExt;
-                    // 7-Zip expects FILETIME (100-nanosecond intervals since January 1, 1601)
-                    // Convert from mtime (seconds since epoch) to FILETIME
-                    let mtime_sec = metadata.mtime();
-                    if mtime_sec >= 0 {
-                        // FILETIME = (seconds * 10_000_000) + 11_644_473_600_000_000
-                        let filetime = (mtime_sec as u64 * 10_000_000) + 11_644_473_600_000_000;
-                        write_unaligned(m_time as *mut u64, filetime);
-                    } else {
-                        write_unaligned(m_time as *mut u64, 0u64);
-                    }
-                }
-
-                // Get access time
-                if !a_time.is_null() {
-                    use std::os::unix::fs::MetadataExt;
-                    let atime_sec = metadata.atime();
-                    if atime_sec >= 0 {
-                        let filetime = (atime_sec as u64 * 10_000_000) + 11_644_473_600_000_000;
-                        write_unaligned(a_time as *mut u64, filetime);
-                    } else {
-                        write_unaligned(a_time as *mut u64, 0u64);
-                    }
-                }
-
-                // Get creation time (use mtime as fallback on Unix)
-                if !c_time.is_null() {
-                    use std::os::unix::fs::MetadataExt;
-                    let ctime_sec = metadata.ctime();
-                    if ctime_sec >= 0 {
-                        let filetime = (ctime_sec as u64 * 10_000_000) + 11_644_473_600_000_000;
-                        write_unaligned(c_time as *mut u64, filetime);
-                    } else {
-                        write_unaligned(c_time as *mut u64, 0u64);
-                    }
-                }
-
-                // Get attributes
-                if !attrib.is_null() {
-                    use std::os::unix::fs::MetadataExt;
-                    let mode = metadata.mode();
-                    // Convert Unix mode to DOS/Windows attributes
-                    // For regular files, set archive attribute (0x20)
-                    let attrs = if metadata.is_dir() {
-                        0x10 // FILE_ATTRIBUTE_DIRECTORY
-                    } else {
-                        0x20 // FILE_ATTRIBUTE_ARCHIVE
-                    };
-                    write_unaligned(attrib, attrs);
-                }
-
-                0 // S_OK
-            }
-            Err(_) => -2147467259, // E_FAIL
-        }
-    }
-
-    unsafe extern "system" fn get_size(
-        this: *mut IStreamGetSize,
-        size: *mut u64,
-    ) -> crate::ffi::HRESULT {
-        if size.is_null() {
-            return -2147467261; // E_POINTER
-        }
-
-        let stream = this as *mut FileStream;
-        let file = &mut (*stream).file;
-
-        let current_pos = match file.stream_position() {
-            Ok(pos) => pos,
-            Err(_) => return -2147467259,
-        };
-
-        let end_pos = match file.seek(SeekFrom::End(0)) {
-            Ok(pos) => pos,
-            Err(_) => return -2147467259,
-        };
-
-        let _ = file.seek(SeekFrom::Start(current_pos));
-
-        write_unaligned(size, end_pos);
-        0
     }
 
     unsafe extern "system" fn add_ref(this: *mut IUnknown) -> u32 {
@@ -345,7 +138,7 @@ impl FileStream {
                 if !processed_size.is_null() {
                     write_unaligned(processed_size, n_u32);
                 }
-                
+
                 if n == 0 && size > 0 {
                     1 // S_FALSE (end of stream)
                 } else {
@@ -432,13 +225,28 @@ impl FileStreamWrite {
     }
     
     unsafe extern "system" fn query_interface(
-        _this: *mut IUnknown,
-        _iid: *const crate::ffi::GUID,
-        _out: *mut *mut c_void,
+        this: *mut IUnknown,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
     ) -> crate::ffi::HRESULT {
-        -1
+        if out.is_null() || iid.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
+        let iid_iunknown = crate::ffi::IID_IUnknown;
+        let iid_sequential_out = crate::ffi::IID_ISequentialOutStream;
+        let iid_out_stream = crate::ffi::IID_IOutStream;
+
+        if *iid == iid_iunknown || *iid == iid_sequential_out || *iid == iid_out_stream {
+            *out = this as *mut c_void;
+            FileStreamWrite::add_ref(this);
+            return 0; // S_OK
+        }
+
+        *out = ptr::null_mut();
+        -2147467262 // E_NOINTERFACE
     }
-    
+
     unsafe extern "system" fn add_ref(this: *mut IUnknown) -> u32 {
         let stream = this as *mut FileStreamWrite;
         let ref_count = &(*stream).ref_count;
@@ -446,7 +254,7 @@ impl FileStreamWrite {
         *ref_count.get() = count + 1;
         count + 1
     }
-    
+
     unsafe extern "system" fn release(this: *mut IUnknown) -> u32 {
         let stream = this as *mut FileStreamWrite;
         let ref_count = &(*stream).ref_count;
@@ -497,14 +305,14 @@ impl FileStreamWrite {
     ) -> crate::ffi::HRESULT {
         let stream = this as *mut FileStreamWrite;
         let mut file = &mut (*stream).file;
-        
+
         let from = match seek_origin {
             SEEK_SET => SeekFrom::Start(offset as u64),
             SEEK_CUR => SeekFrom::Current(offset),
             SEEK_END => SeekFrom::End(offset),
             _ => return -2147467259,
         };
-        
+
         match file.seek(from) {
             Ok(pos) => {
                 *new_position = pos;
@@ -513,14 +321,14 @@ impl FileStreamWrite {
             Err(_) => -2147467259,
         }
     }
-    
+
     unsafe extern "system" fn set_size(
         this: *mut IOutStream,
         new_size: u64,
     ) -> crate::ffi::HRESULT {
         let stream = this as *mut FileStreamWrite;
         let file = &(*stream).file;
-        
+
         match file.set_len(new_size) {
             Ok(_) => 0,
             Err(_) => -2147467259,
@@ -563,13 +371,28 @@ impl BufferInStream {
     }
     
     unsafe extern "system" fn query_interface(
-        _this: *mut IUnknown,
-        _iid: *const crate::ffi::GUID,
-        _out: *mut *mut c_void,
+        this: *mut IUnknown,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
     ) -> crate::ffi::HRESULT {
-        -1
+        if out.is_null() || iid.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
+        let iid_iunknown = crate::ffi::IID_IUnknown;
+        let iid_sequential_in = crate::ffi::IID_ISequentialInStream;
+        let iid_in_stream = crate::ffi::IID_IInStream;
+
+        if *iid == iid_iunknown || *iid == iid_sequential_in || *iid == iid_in_stream {
+            *out = this as *mut c_void;
+            BufferInStream::add_ref(this);
+            return 0; // S_OK
+        }
+
+        *out = ptr::null_mut();
+        -2147467262 // E_NOINTERFACE
     }
-    
+
     unsafe extern "system" fn add_ref(this: *mut IUnknown) -> u32 {
         let stream = this as *mut BufferInStream;
         let ref_count = &(*stream).ref_count;
@@ -577,7 +400,7 @@ impl BufferInStream {
         *ref_count.get() = count + 1;
         count + 1
     }
-    
+
     unsafe extern "system" fn release(this: *mut IUnknown) -> u32 {
         let stream = this as *mut BufferInStream;
         let ref_count = &(*stream).ref_count;
@@ -695,13 +518,28 @@ impl BufferOutStream {
     }
     
     unsafe extern "system" fn query_interface(
-        _this: *mut IUnknown,
-        _iid: *const crate::ffi::GUID,
-        _out: *mut *mut c_void,
+        this: *mut IUnknown,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
     ) -> crate::ffi::HRESULT {
-        -1
+        if out.is_null() || iid.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
+        let iid_iunknown = crate::ffi::IID_IUnknown;
+        let iid_sequential_out = crate::ffi::IID_ISequentialOutStream;
+        let iid_out_stream = crate::ffi::IID_IOutStream;
+
+        if *iid == iid_iunknown || *iid == iid_sequential_out || *iid == iid_out_stream {
+            *out = this as *mut c_void;
+            BufferOutStream::add_ref(this);
+            return 0; // S_OK
+        }
+
+        *out = ptr::null_mut();
+        -2147467262 // E_NOINTERFACE
     }
-    
+
     unsafe extern "system" fn add_ref(this: *mut IUnknown) -> u32 {
         let stream = this as *mut BufferOutStream;
         let ref_count = &(*stream).ref_count;
@@ -709,7 +547,7 @@ impl BufferOutStream {
         *ref_count.get() = count + 1;
         count + 1
     }
-    
+
     unsafe extern "system" fn release(this: *mut IUnknown) -> u32 {
         let stream = this as *mut BufferOutStream;
         let ref_count = &(*stream).ref_count;

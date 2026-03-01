@@ -291,14 +291,12 @@ pub unsafe fn propvariant_to_string(prop: &PROPVARIANT) -> Result<String> {
         // Read byte length from 4 bytes before the BSTR pointer
         let byte_len_ptr = (ptr as *const u8).offset(-4) as *const u32;
         let byte_len = std::ptr::read_unaligned(byte_len_ptr) as usize;
-        
+
         // On Linux, 7-Zip uses wchar_t (4 bytes, UTF-32), not UTF-16
         // We need to determine the character size from the byte length
         // Try to detect: if byte_len is divisible by 4 and not by 2, it's UTF-32
         // Otherwise, check the content to determine encoding
-        
-        let char_data = std::slice::from_raw_parts(ptr as *const u8, byte_len);
-        
+
         // Try UTF-32 first (Linux 7-Zip)
         if byte_len % 4 == 0 && byte_len > 0 {
             let u32_chars = byte_len / 4;
@@ -318,7 +316,7 @@ pub unsafe fn propvariant_to_string(prop: &PROPVARIANT) -> Result<String> {
                 return Ok(result);
             }
         }
-        
+
         // Fall back to UTF-16 (Windows 7-Zip or pure ASCII)
         let char_len = byte_len / 2;
         let u16_slice = std::slice::from_raw_parts(ptr, char_len);
@@ -444,35 +442,74 @@ pub unsafe fn propvariant_to_i64(prop: &PROPVARIANT) -> i64 {
 /// BSTR layout: [4-byte byte-length][string data][null terminator]
 pub fn alloc_bstr(s: &[u16]) -> *mut u16 {
     use std::alloc::{alloc, Layout};
-    
+
     if s.is_empty() {
         return std::ptr::null_mut();
     }
-    
+
     let byte_len = s.len() * 2;
-    
+
     // Allocate memory: 4 bytes for length + string data + 2 bytes for null terminator
     let total_size = 4 + byte_len + 2;
     let layout = Layout::from_size_align(total_size, 4).unwrap();
-    
+
     unsafe {
         let ptr = alloc(layout);
         if ptr.is_null() {
             return std::ptr::null_mut();
         }
-        
+
         // Write byte length (4 bytes before string data)
         let len_ptr = ptr as *mut u32;
         *len_ptr = byte_len as u32;
-        
+
         // Copy string data
         let str_ptr = ptr.add(4);
         std::ptr::copy_nonoverlapping(s.as_ptr(), str_ptr as *mut u16, s.len());
-        
+
         // Write null terminator
         *(str_ptr.add(s.len()) as *mut u16) = 0;
-        
+
         // Return pointer to string data (after length prefix)
         str_ptr as *mut u16
+    }
+}
+
+/// Allocate a BSTR from a UTF-32 slice (for Linux 7-Zip)
+/// BSTR layout: [4-byte byte-length][string data (UTF-32)][null terminator]
+pub fn alloc_bstr_utf32(s: &[u32]) -> *mut u32 {
+    use std::alloc::{alloc, Layout};
+
+    if s.is_empty() {
+        return std::ptr::null_mut();
+    }
+
+    let byte_len = s.len() * 4;
+
+    // Allocate memory: 4 bytes for length + string data + 4 bytes for null terminator
+    let total_size = 4 + byte_len + 4;
+    // Use alignment of 4 bytes for u32
+    let layout = Layout::from_size_align(total_size, 4).unwrap();
+
+    unsafe {
+        let ptr = alloc(layout);
+        if ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        // Write byte length (4 bytes before string data)
+        let len_ptr = ptr as *mut u32;
+        len_ptr.write_unaligned(byte_len as u32);
+
+        // Copy string data
+        let str_ptr = ptr.add(4);
+        std::ptr::copy_nonoverlapping(s.as_ptr(), str_ptr as *mut u32, s.len());
+
+        // Write null terminator
+        let null_ptr = str_ptr.add(s.len()) as *mut u32;
+        null_ptr.write_unaligned(0);
+
+        // Return pointer to string data (after length prefix)
+        str_ptr as *mut u32
     }
 }

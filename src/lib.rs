@@ -29,8 +29,10 @@ pub mod stream;
 pub mod compressor;
 pub mod extractor;
 pub mod archive_reader;
+pub mod callback;
 pub mod progress;
 pub mod archive_writer;
+pub mod compress_callback;
 
 pub use ffi::BitLibrary;
 pub use ffi::LibraryError;
@@ -40,6 +42,7 @@ pub use ffi::GUID;
 pub use ffi::HRESULT;
 pub use ffi::PROPVARIANT;
 pub use ffi::PROPID;
+pub use ffi::ISetProperties;
 
 pub use format::{
     CompressionFormat, ExtractFormat, CompressionLevel, CompressionMethod,

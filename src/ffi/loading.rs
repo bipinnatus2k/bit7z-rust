@@ -15,7 +15,7 @@ use std::ptr::NonNull;
 pub const DEFAULT_LIBRARY: &str = "7z.dll";
 
 #[cfg(target_os = "linux")]
-pub const DEFAULT_LIBRARY: &str = "/usr/lib/p7zip/7z.so";
+pub const DEFAULT_LIBRARY: &str = "/usr/lib/7zip/7z.so";
 
 #[cfg(target_os = "macos")]
 pub const DEFAULT_LIBRARY: &str = "7z.dylib";

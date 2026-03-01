@@ -13,6 +13,7 @@ use crate::ffi::{
 use crate::format::ExtractFormat;
 use crate::error::{Bit7zError, Result};
 use crate::stream::{FileStreamWrite, BufferInStream};
+use crate::callback::OpenCallback;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::fs;
@@ -54,20 +55,20 @@ impl<'a> BitExtractor<'a> {
                 crate::stream::FileStream::new(archive_path.as_ref())?
             ));
 
-            // For some formats (like TAR), we need to pass a valid maxCheckStartPosition
-            // 0 means search from the beginning with a default limit
-            let max_check_start_position: u64 = 0;
+            // For some formats (like TAR), we need to pass null or they fail to open
+            let max_check_start_position: *const u64 = std::ptr::null();
 
             let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
 
             let result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
                 in_stream.as_i_in_stream(),
-                &max_check_start_position,
+                max_check_start_position,
                 open_callback.as_i_archive_open_callback(),
             );
 
-            if result != 0 {
+            // S_OK (0) and S_FALSE (1) are both success for some formats
+            if result != 0 && result != 1 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", result
                 )));
@@ -414,197 +415,6 @@ impl<'a> BitExtractor<'a> {
         }
 
         path_chars.peek().is_none()
-    }
-}
-
-/// Unified callback structure that implements multiple 7-Zip interfaces
-/// Uses a single vtable containing all interface methods
-#[repr(C)]
-struct OpenCallback {
-    base_vtable: *const c_void,  // Points to a unified vtable
-    archive_path: PathBuf,
-    ref_count: UnsafeCell<u32>,
-}
-
-// Unified vtable structure containing all interface methods
-struct OpenCallbackVTable {
-    // IUnknown
-    query_interface: unsafe extern "system" fn(*mut crate::ffi::IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
-    add_ref: unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
-    release: unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
-    // IArchiveOpenCallback
-    set_completed: unsafe extern "system" fn(*mut IArchiveOpenCallback, *const u64, *const u64) -> HRESULT,
-    set_total: unsafe extern "system" fn(*mut IArchiveOpenCallback, *const u64, *const u64) -> HRESULT,
-    // IArchiveOpenVolumeCallback  
-    get_property: unsafe extern "system" fn(*mut IArchiveOpenVolumeCallback, u32, *mut PROPVARIANT) -> HRESULT,
-    get_stream: unsafe extern "system" fn(*mut IArchiveOpenVolumeCallback, *const u16, *mut *mut IInStream) -> HRESULT,
-    // IArchiveOpenSetSubArchiveName
-    set_sub_archive_name: unsafe extern "system" fn(*mut IArchiveOpenSetSubArchiveName, *const u16) -> HRESULT,
-    // ICryptoGetTextPassword
-    get_text_password: unsafe extern "system" fn(*mut ICryptoGetTextPassword, *mut *mut u16) -> HRESULT,
-}
-
-static mut OPEN_CALLBACK_VTABLE: Option<OpenCallbackVTable> = None;
-
-fn init_vtable() -> *const OpenCallbackVTable {
-    unsafe {
-        if OPEN_CALLBACK_VTABLE.is_none() {
-            OPEN_CALLBACK_VTABLE = Some(OpenCallbackVTable {
-                query_interface: OpenCallback::query_interface,
-                add_ref: OpenCallback::add_ref,
-                release: OpenCallback::release,
-                set_completed: OpenCallback::set_completed,
-                set_total: OpenCallback::set_total,
-                get_property: OpenCallback::get_property,
-                get_stream: OpenCallback::get_stream,
-                set_sub_archive_name: OpenCallback::set_sub_archive_name,
-                get_text_password: OpenCallback::get_text_password,
-            });
-        }
-        OPEN_CALLBACK_VTABLE.as_ref().unwrap() as *const _
-    }
-}
-
-impl OpenCallback {
-    fn new(archive_path: &Path) -> Self {
-        OpenCallback {
-            base_vtable: init_vtable() as *const c_void,
-            archive_path: archive_path.to_path_buf(),
-            ref_count: UnsafeCell::new(1),
-        }
-    }
-
-    fn as_i_archive_open_callback(&self) -> *mut IArchiveOpenCallback {
-        self as *const OpenCallback as *mut OpenCallback as *mut IArchiveOpenCallback
-    }
-
-    unsafe extern "system" fn query_interface(
-        this: *mut crate::ffi::IUnknown,
-        iid: *const crate::ffi::GUID,
-        out: *mut *mut c_void,
-    ) -> HRESULT {
-        if out.is_null() || iid.is_null() {
-            return -2147467261; // E_POINTER
-        }
-
-        let iid_iunknown = crate::ffi::IID_IUnknown;
-        let iid_open_callback = crate::ffi::IID_IArchiveOpenCallback;
-        let iid_volume_callback = crate::ffi::IID_IArchiveOpenVolumeCallback;
-        let iid_set_name = crate::ffi::IID_IArchiveOpenSetSubArchiveName;
-        let iid_crypto = crate::ffi::IID_ICryptoGetTextPassword;
-
-        // For all supported interfaces, return the same pointer
-        if *iid == iid_iunknown || 
-           *iid == iid_open_callback || 
-           *iid == iid_volume_callback || 
-           *iid == iid_set_name || 
-           *iid == iid_crypto {
-            *out = this as *mut c_void;
-            OpenCallback::add_ref(this);
-            return 0; // S_OK
-        }
-
-        *out = ptr::null_mut();
-        -2147467262 // E_NOINTERFACE
-    }
-
-    unsafe extern "system" fn add_ref(this: *mut crate::ffi::IUnknown) -> u32 {
-        let callback = this as *mut OpenCallback;
-        let ref_count = &(*callback).ref_count;
-        let count = *ref_count.get();
-        *ref_count.get() = count + 1;
-        count + 1
-    }
-
-    unsafe extern "system" fn release(this: *mut crate::ffi::IUnknown) -> u32 {
-        let callback = this as *mut OpenCallback;
-        let ref_count = &(*callback).ref_count;
-        let count = *ref_count.get();
-        if count > 0 {
-            *ref_count.get() = count - 1;
-            count - 1
-        } else {
-            0
-        }
-    }
-
-    unsafe extern "system" fn set_total(
-        _this: *mut IArchiveOpenCallback,
-        _files: *const u64,
-        _bytes: *const u64,
-    ) -> HRESULT {
-        0 // S_OK
-    }
-
-    unsafe extern "system" fn set_completed(
-        _this: *mut IArchiveOpenCallback,
-        _files: *const u64,
-        _bytes: *const u64,
-    ) -> HRESULT {
-        0 // S_OK
-    }
-
-    unsafe extern "system" fn get_property(
-        this: *mut IArchiveOpenVolumeCallback,
-        prop_id: u32,
-        value: *mut PROPVARIANT,
-    ) -> HRESULT {
-        if value.is_null() {
-            return -2147467261; // E_POINTER
-        }
-        
-        // kpidName = 0
-        if prop_id == 0 {
-            let callback = this as *const OpenCallback;
-            let path = &(*callback).archive_path;
-            
-            // Convert path to UTF-16
-            let path_str = path.to_string_lossy();
-            let utf16: Vec<u16> = path_str.encode_utf16().chain(std::iter::once(0)).collect();
-            
-            // Allocate BSTR
-            let bstr = crate::ffi::variant::alloc_bstr(&utf16[..utf16.len()-1]);
-            if bstr.is_null() {
-                return -2147467259; // E_FAIL
-            }
-            
-            // Set PROPVARIANT
-            (*value).vt = 8; // VT_BSTR
-            (*value).wReserved1 = 0;
-            (*value).wReserved2 = 0;
-            (*value).wReserved3 = 0;
-            // Write BSTR pointer to data array (first 8 bytes on 64-bit)
-            let data_ptr = (*value).data.as_mut_ptr() as *mut *mut u16;
-            *data_ptr = bstr;
-            
-            return 0; // S_OK
-        }
-        
-        0 // S_OK - return empty property for other props
-    }
-
-    unsafe extern "system" fn get_stream(
-        _this: *mut IArchiveOpenVolumeCallback,
-        _name: *const u16,
-        _in_stream: *mut *mut IInStream,
-    ) -> HRESULT {
-        // Return S_FALSE to indicate no multi-volume archive support
-        // This is the same behavior as bit7z when sub-archive mode is not active
-        1 // S_FALSE
-    }
-
-    unsafe extern "system" fn set_sub_archive_name(
-        _this: *mut IArchiveOpenSetSubArchiveName,
-        _name: *const u16,
-    ) -> HRESULT {
-        0 // S_OK
-    }
-
-    unsafe extern "system" fn get_text_password(
-        _this: *mut ICryptoGetTextPassword,
-        _password: *mut *mut u16,
-    ) -> HRESULT {
-        -2147467262 // E_NOINTERFACE - no password support
     }
 }
 

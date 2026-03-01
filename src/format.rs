@@ -69,6 +69,70 @@ pub enum ExtractFormat {
     Deb,
     /// CPIO format (read-only)
     Cpio,
+    /// Z format (read-only, Unix compress)
+    Z,
+    /// DMG format (macOS disk image)
+    Dmg,
+    /// Ext format (Linux filesystem)
+    Ext,
+    /// Fat format (Windows filesystem)
+    Fat,
+    /// HFS format (macOS filesystem)
+    Hfs,
+    /// NTFS format (Windows filesystem)
+    Ntfs,
+    /// QCOW format (QEMU disk image)
+    Qcow,
+    /// VDI format (VirtualBox disk image)
+    Vdi,
+    /// VHD format (Virtual PC disk image)
+    Vhd,
+    /// VHDX format (Hyper-V disk image)
+    Vhdx,
+    /// VMDK format (VMware disk image)
+    Vmdk,
+    /// CramFS format (compressed filesystem)
+    Cramfs,
+    /// SquashFS format (compressed filesystem)
+    Squashfs,
+    /// APFS format (Apple filesystem)
+    Apfs,
+    /// ELF format (Linux executable)
+    Elf,
+    /// Mach-O format (macOS executable)
+    Macho,
+    /// PE format (Windows executable)
+    Pe,
+    /// UEFIc format (UEFI capsule)
+    Uefic,
+    /// UEFIf format (UEFI firmware)
+    Uefif,
+    /// TE format (Tiano Core EFI)
+    Te,
+    /// GPT format (GUID Partition Table)
+    Gpt,
+    /// MBR format (Master Boot Record)
+    Mbr,
+    /// APM format (Apple Partition Map)
+    Apm,
+    /// Xar format (XAR archive)
+    Xar,
+    /// Ar format (Unix archive)
+    Ar,
+    /// Compound format (Microsoft Compound Document)
+    Compound,
+    /// Base64 format (encoded data)
+    Base64,
+    /// COFF format (object file)
+    Coff,
+    /// IHex format (Intel HEX)
+    IHex,
+    /// Mub format (Mach-O Universal Binary)
+    Mub,
+    /// LP format (printer mirror)
+    LP,
+    /// Hxs format (Microsoft Help)
+    Hxs,
 }
 
 /// Compression level
@@ -317,6 +381,38 @@ impl ExtractFormat {
             ExtractFormat::Rpm => crate::ffi::CLSID_CFormatRpm,
             ExtractFormat::Deb => crate::ffi::CLSID_CFormatDeb,
             ExtractFormat::Cpio => crate::ffi::CLSID_CFormatCpio,
+            ExtractFormat::Z => crate::ffi::CLSID_CFormatZ,
+            ExtractFormat::Dmg => crate::ffi::CLSID_CFormatDmg,
+            ExtractFormat::Ext => crate::ffi::CLSID_CFormatExt,
+            ExtractFormat::Fat => crate::ffi::CLSID_CFormatFat,
+            ExtractFormat::Hfs => crate::ffi::CLSID_CFormatHfs,
+            ExtractFormat::Ntfs => crate::ffi::CLSID_CFormatNtfs,
+            ExtractFormat::Qcow => crate::ffi::CLSID_CFormatQcow,
+            ExtractFormat::Vdi => crate::ffi::CLSID_CFormatVdi,
+            ExtractFormat::Vhd => crate::ffi::CLSID_CFormatVhd,
+            ExtractFormat::Vhdx => crate::ffi::CLSID_CFormatVhdx,
+            ExtractFormat::Vmdk => crate::ffi::CLSID_CFormatVmdk,
+            ExtractFormat::Cramfs => crate::ffi::CLSID_CFormatCramfs,
+            ExtractFormat::Squashfs => crate::ffi::CLSID_CFormatSquashfs,
+            ExtractFormat::Apfs => crate::ffi::CLSID_CFormatApfs,
+            ExtractFormat::Elf => crate::ffi::CLSID_CFormatElf,
+            ExtractFormat::Macho => crate::ffi::CLSID_CFormatMacho,
+            ExtractFormat::Pe => crate::ffi::CLSID_CFormatPe,
+            ExtractFormat::Uefic => crate::ffi::CLSID_CFormatUefic,
+            ExtractFormat::Uefif => crate::ffi::CLSID_CFormatUefif,
+            ExtractFormat::Te => crate::ffi::CLSID_CFormatTe,
+            ExtractFormat::Gpt => crate::ffi::CLSID_CFormatGpt,
+            ExtractFormat::Mbr => crate::ffi::CLSID_CFormatMbr,
+            ExtractFormat::Apm => crate::ffi::CLSID_CFormatApm,
+            ExtractFormat::Xar => crate::ffi::CLSID_CFormatXar,
+            ExtractFormat::Ar => crate::ffi::CLSID_CFormatAr,
+            ExtractFormat::Compound => crate::ffi::CLSID_CFormatCompound,
+            ExtractFormat::Base64 => crate::ffi::CLSID_CFormatBase64,
+            ExtractFormat::Coff => crate::ffi::CLSID_CFormatCoff,
+            ExtractFormat::IHex => crate::ffi::CLSID_CFormatIHex,
+            ExtractFormat::Mub => crate::ffi::CLSID_CFormatMub,
+            ExtractFormat::LP => crate::ffi::CLSID_CFormatLP,
+            ExtractFormat::Hxs => crate::ffi::CLSID_CFormatHxs,
         }
     }
 }

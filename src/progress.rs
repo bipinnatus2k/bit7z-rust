@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn test_simple_progress() {
-        let progress = SimpleProgress::new();
+        let mut progress = SimpleProgress::new();
         
         progress.on_total(1000);
         assert_eq!(progress.total(), 1000);

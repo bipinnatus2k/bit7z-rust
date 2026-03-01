@@ -162,9 +162,8 @@ pub struct IOutArchiveVTable {
     pub base: IUnknownVTable,
     pub update_items: unsafe extern "system" fn(
         this: *mut IOutArchive,
-        out_stream: *mut IOutStream,
+        out_stream: *mut ISequentialOutStream,
         num_items: u32,
-        item_data: *const *const c_void,
         update_callback: *mut IArchiveUpdateCallback,
     ) -> HRESULT,
     pub get_file_time_type: unsafe extern "system" fn(
@@ -260,18 +259,10 @@ pub struct IArchiveExtractCallback {
     pub vtable: *const IArchiveExtractCallbackVTable,
 }
 
-// IArchiveUpdateCallback
+// IArchiveUpdateCallback - inherits from IProgress
 #[repr(C)]
 pub struct IArchiveUpdateCallbackVTable {
-    pub base: IUnknownVTable,
-    pub set_total: unsafe extern "system" fn(
-        this: *mut IArchiveUpdateCallback,
-        size: u64,
-    ) -> HRESULT,
-    pub set_completed: unsafe extern "system" fn(
-        this: *mut IArchiveUpdateCallback,
-        complete_value: *const u64,
-    ) -> HRESULT,
+    pub base: IProgressVTable,
     pub get_update_item_info: unsafe extern "system" fn(
         this: *mut IArchiveUpdateCallback,
         index: u32,
@@ -335,6 +326,22 @@ pub struct ICryptoGetTextPassword {
     pub vtable: *const ICryptoGetTextPasswordVTable,
 }
 
+// ICryptoGetTextPassword2 - extended password interface
+#[repr(C)]
+pub struct ICryptoGetTextPassword2VTable {
+    pub base: IUnknownVTable,
+    pub crypto_get_text_password2: unsafe extern "system" fn(
+        this: *mut ICryptoGetTextPassword2,
+        password_is_defined: *mut i32,
+        password: *mut *mut u16,
+    ) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct ICryptoGetTextPassword2 {
+    pub vtable: *const ICryptoGetTextPassword2VTable,
+}
+
 // Seek origin constants
 pub const SEEK_SET: u32 = 0;
 pub const SEEK_CUR: u32 = 1;
@@ -364,4 +371,21 @@ pub struct IStreamGetPropsVTable {
 #[repr(C)]
 pub struct IStreamGetProps {
     pub vtable: *const IStreamGetPropsVTable,
+}
+
+// ISetProperties interface - for setting archive properties
+#[repr(C)]
+pub struct ISetPropertiesVTable {
+    pub base: IUnknownVTable,
+    pub set_properties: unsafe extern "system" fn(
+        this: *mut ISetProperties,
+        names: *const *const u16,
+        values: *const *const c_void,
+        num_properties: u32,
+    ) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct ISetProperties {
+    pub vtable: *const ISetPropertiesVTable,
 }
