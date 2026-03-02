@@ -44,32 +44,34 @@ fn cleanup_output_file(name: &str) {
 fn test_progress_callback() {
     let prefix = "progress_cb";
     let file_path = create_test_file(prefix, "test.txt", "Hello, World! This is test content.");
-    
+
     let progress_called = Arc::new(Mutex::new(false));
     let progress_called_clone = progress_called.clone();
-    
-    let progress_cb: ProgressCallback = Box::new(move |completed, total| {
+
+    let progress_cb: ProgressCallback = Arc::new(Mutex::new(move |completed, total| {
         let mut called = progress_called_clone.lock().unwrap();
         *called = true;
         println!("Progress: {}/{}", completed, total);
-    });
-    
+        true
+    }));
+
     let items = vec![InputItem::new(&file_path)];
     let callback = UpdateCallback::with_callbacks(
         items,
         None,
+        None,  // total_callback
         Some(progress_cb),
-        None,
-        None,
-        None,
+        None,  // ratio_callback
+        None,  // file_callback
+        None,  // password_callback
     );
-    
+
     // Verify callback was created
     assert!(callback.as_i_archive_update_callback() != std::ptr::null_mut());
-    
+
     // Cleanup
     cleanup_test_dir(prefix);
-    
+
     // Note: Actual callback invocation happens during compression
     // which requires 7-Zip library
 }
@@ -78,28 +80,29 @@ fn test_progress_callback() {
 fn test_ratio_callback() {
     let prefix = "ratio_cb";
     let file_path = create_test_file(prefix, "test.txt", "Test content for ratio callback.");
-    
+
     let ratio_values = Arc::new(Mutex::new((0u64, 0u64)));
     let ratio_values_clone = ratio_values.clone();
-    
-    let ratio_cb: RatioCallback = Box::new(move |in_size, out_size| {
+
+    let ratio_cb: RatioCallback = Arc::new(Mutex::new(move |in_size, out_size| {
         let mut values = ratio_values_clone.lock().unwrap();
         *values = (in_size, out_size);
         println!("Ratio: in={}, out={}", in_size, out_size);
-    });
-    
+    }));
+
     let items = vec![InputItem::new(&file_path)];
     let callback = UpdateCallback::with_callbacks(
         items,
         None,
-        None,
+        None,  // total_callback
+        None,  // progress_callback
         Some(ratio_cb),
-        None,
-        None,
+        None,  // file_callback
+        None,  // password_callback
     );
-    
+
     assert!(callback.as_i_archive_update_callback() != std::ptr::null_mut());
-    
+
     // Cleanup
     cleanup_test_dir(prefix);
 }
@@ -108,28 +111,29 @@ fn test_ratio_callback() {
 fn test_file_callback() {
     let prefix = "file_cb";
     let file_path = create_test_file(prefix, "test.txt", "Test content.");
-    
+
     let files_processed = Arc::new(Mutex::new(Vec::new()));
     let files_processed_clone = files_processed.clone();
-    
-    let file_cb: FileCallback = Box::new(move |path| {
+
+    let file_cb: FileCallback = Arc::new(Mutex::new(move |path: &str| {
         let mut files = files_processed_clone.lock().unwrap();
         files.push(path.to_string());
         println!("Processing file: {}", path);
-    });
+    }));
     
     let items = vec![InputItem::new(&file_path)];
     let callback = UpdateCallback::with_callbacks(
         items,
         None,
-        None,
-        None,
+        None,  // total_callback
+        None,  // progress_callback
+        None,  // ratio_callback
         Some(file_cb),
-        None,
+        None,  // password_callback
     );
-    
+
     assert!(callback.as_i_archive_update_callback() != std::ptr::null_mut());
-    
+
     // Cleanup
     cleanup_test_dir(prefix);
 }
@@ -138,30 +142,33 @@ fn test_file_callback() {
 fn test_multiple_callbacks() {
     let prefix = "multi_cb";
     let file_path = create_test_file(prefix, "test.txt", "Test content.");
-    
-    let progress_cb: ProgressCallback = Box::new(|completed, total| {
+
+    let progress_cb: ProgressCallback = Arc::new(Mutex::new(|completed: u64, total: u64| {
         println!("Progress: {}/{}", completed, total);
-    });
-    
-    let ratio_cb: RatioCallback = Box::new(|in_size, out_size| {
+        true
+    }));
+
+    let ratio_cb: RatioCallback = Arc::new(Mutex::new(|in_size: u64, out_size: u64| {
         println!("Ratio: {}/{}", in_size, out_size);
-    });
-    
-    let file_cb: FileCallback = Box::new(|path| {
+    }));
+
+    let file_cb: FileCallback = Arc::new(Mutex::new(|path: &str| {
         println!("File: {}", path);
-    });
-    
+    }));
+
     let items = vec![InputItem::new(&file_path)];
     let callback = UpdateCallback::with_callbacks(
         items,
         None,
+        None,  // total_callback
         Some(progress_cb),
         Some(ratio_cb),
         Some(file_cb),
-        None,
+        None,  // password_callback
     );
-    
+
     assert!(callback.as_i_archive_update_callback() != std::ptr::null_mut());
+
     
     // Cleanup
     cleanup_test_dir(prefix);

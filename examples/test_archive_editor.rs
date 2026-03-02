@@ -10,7 +10,7 @@ use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load 7-Zip library
-    let lib = BitLibrary::new(None)?;
+    let lib = BitLibrary::new(None::<&str>)?;
     
     // Create a test archive first
     let test_archive = "test_edit.7z";
@@ -46,34 +46,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         println!("\n原始档案内容:");
         for item in reader_owned.items()? {
-            println!("  [{}] {}", item.index, item.path());
+            println!("  [{}] {}", item.index, item.path);
         }
-        
+
         // Rename item 0
         editor.rename_item(0, "renamed_file.txt".to_string())?;
         println!("\n重命名项目 0 -> renamed_file.txt");
-        
+
         // Update item 1 content
         std::fs::write("test_file2_updated.txt", "Updated Content")?;
         editor.update_item(1, "test_file2_updated.txt")?;
         println!("更新项目 1 内容");
-        
+
         // Delete item 2
         editor.delete_item(2, DeletePolicy::ItemOnly)?;
         println!("删除项目 2");
-        
+
         // Apply changes
         editor.apply_changes()?;
         println!("\n更改已应用！");
-        
+
         // Read edited archive
         let reader2 = BitArchiveReader::new(&lib, CompressionFormat::SevenZip.into());
         let mut reader2_owned = reader2;
         reader2_owned.open(test_archive)?;
-        
+
         println!("\n编辑后的档案内容:");
         for item in reader2_owned.items()? {
-            println!("  [{}] {}", item.index, item.path());
+            println!("  [{}] {}", item.index, item.path);
         }
     }
     

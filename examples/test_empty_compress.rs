@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 尝试压缩 0 个项目
     println!("尝试压缩 0 个项目...");
-    match compressor.compress::<&Path>(&[], &output_file) {
+    match compressor.compress::<&Path, &Path>(&[], &output_file) {
         Ok(_) => {
             println!("✓ 空压缩成功!");
             if output_file.exists() {

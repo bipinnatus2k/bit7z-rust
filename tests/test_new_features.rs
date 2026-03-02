@@ -88,7 +88,13 @@ fn test_archive_editor_rename() {
 
 #[test]
 fn test_archive_editor_update() {
-    let lib = get_library();
+    let lib = match get_library() {
+        Some(l) => l,
+        None => {
+            eprintln!("Skipping test: 7-Zip library not available");
+            return;
+        }
+    };
     let test_dir = std::env::temp_dir().join("bit7z_test_editor_update");
     let archive_path = test_dir.join("test.7z");
     
@@ -126,7 +132,13 @@ fn test_archive_editor_update() {
 
 #[test]
 fn test_archive_editor_delete() {
-    let lib = get_library();
+    let lib = match get_library() {
+        Some(l) => l,
+        None => {
+            eprintln!("Skipping test: 7-Zip library not available");
+            return;
+        }
+    };
     let test_dir = std::env::temp_dir().join("bit7z_test_editor_delete");
     let archive_path = test_dir.join("test.7z");
     
@@ -175,7 +187,7 @@ fn test_archive_editor_delete() {
 
 #[test]
 fn test_compressor_callbacks() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_callbacks");
     let archive_path = test_dir.join("test.7z");
     
@@ -225,7 +237,7 @@ fn test_compressor_callbacks() {
 
 #[test]
 fn test_compressor_password_callback() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_password_cb");
     let archive_path = test_dir.join("test.7z");
     
@@ -258,7 +270,7 @@ fn test_compressor_password_callback() {
 
 #[test]
 fn test_compress_from_buffer() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_buffer");
     let archive_path = test_dir.join("test.7z");
     
@@ -288,7 +300,7 @@ fn test_compress_from_buffer() {
 
 #[test]
 fn test_compress_from_stream() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_stream");
     let archive_path = test_dir.join("test.7z");
     
@@ -313,7 +325,7 @@ fn test_compress_from_stream() {
 
 #[test]
 fn test_extract_to_buffer() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_extract_buffer");
     let archive_path = test_dir.join("test.7z");
     
@@ -339,7 +351,7 @@ fn test_extract_to_buffer() {
 
 #[test]
 fn test_extract_to_stream() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_extract_stream");
     let archive_path = test_dir.join("test.7z");
     
@@ -368,7 +380,7 @@ fn test_extract_to_stream() {
 
 #[test]
 fn test_extract_items_by_index() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_extract_items");
     let archive_path = test_dir.join("test.7z");
     let output_dir = test_dir.join("output");
@@ -409,7 +421,7 @@ fn test_extract_items_by_index() {
 
 #[test]
 fn test_extract_matching_wildcard() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_wildcard");
     let archive_path = test_dir.join("test.7z");
     let output_dir = test_dir.join("output");
@@ -453,7 +465,7 @@ fn test_extract_matching_wildcard() {
 
 #[test]
 fn test_extract_matching_regex() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_regex");
     let archive_path = test_dir.join("test.7z");
     let output_dir = test_dir.join("output");
@@ -498,7 +510,7 @@ fn test_extract_matching_regex() {
 
 #[test]
 fn test_archive_integrity() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_integrity");
     let archive_path = test_dir.join("test.7z");
     
@@ -529,7 +541,7 @@ fn test_archive_integrity() {
 
 #[test]
 fn test_archive_properties() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_properties");
     let archive_path = test_dir.join("test.7z");
     
@@ -580,7 +592,7 @@ fn test_archive_properties() {
 
 #[test]
 fn test_static_encryption_check() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_static_enc");
     let archive_path = test_dir.join("test.7z");
     
@@ -619,7 +631,7 @@ fn test_static_encryption_check() {
 
 #[test]
 fn test_compress_files_only() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_files_only");
     let archive_path = test_dir.join("test.7z");
     
@@ -656,7 +668,7 @@ fn test_compress_files_only() {
 
 #[test]
 fn test_compress_directory_with_filter() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_dir_filter");
     let archive_path = test_dir.join("test.7z");
     
@@ -691,7 +703,7 @@ fn test_compress_directory_with_filter() {
 
 #[test]
 fn test_compress_with_aliases() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_aliases");
     let archive_path = test_dir.join("test.7z");
     
@@ -722,7 +734,7 @@ fn test_compress_with_aliases() {
 
 #[test]
 fn test_volume_size_setting() {
-    let lib = get_library();
+    let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_volume");
     let archive_path = test_dir.join("test.7z");
     
