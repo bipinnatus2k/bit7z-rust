@@ -6,6 +6,12 @@
 //! - 密码加密测试
 //! - 文件和目录压缩测试
 //! - 内存缓冲区压缩测试
+//!
+//! 所有测试使用严格的验证机制，包括：
+//! - 压缩后档案验证
+//! - 解压内容比对
+//! - 哈希校验
+//! - 详细的错误报告
 
 use bit7z_rust::{
     BitLibrary, BitCompressor, BitExtractor, BitArchiveReader,
@@ -14,6 +20,11 @@ use bit7z_rust::{
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
+
+// 导入测试验证工具
+mod test_utils;
+use test_utils::{TestVerifier, compute_hash, ArchiveVerificationResult};
+use std::fmt::Debug;
 
 /// 获取 7-Zip 库路径
 fn get_library_path() -> Option<String> {
@@ -39,41 +50,213 @@ fn get_library_path() -> Option<String> {
     None
 }
 
+/// 测试文件信息（包含内容和哈希）
+#[derive(Debug, Clone)]
+struct TestFileData {
+    path: String,
+    content: Vec<u8>,
+    hash: String,
+}
+
 /// 创建测试文件
-fn create_test_files(temp_dir: &Path) -> std::io::Result<Vec<String>> {
+/// 返回包含文件内容、哈希的详细信息，用于后续验证
+fn create_test_files(temp_dir: &Path) -> std::io::Result<Vec<TestFileData>> {
     let mut files = Vec::new();
-    
+
     // 创建文本文件
     let file1_path = temp_dir.join("test1.txt");
-    fs::write(&file1_path, "这是第一个测试文件的内容。\nHello from test1!")?;
-    files.push(file1_path.to_string_lossy().to_string());
-    
+    let content1 = "这是第一个测试文件的内容。\nHello from test1!";
+    fs::write(&file1_path, content1)?;
+    files.push(TestFileData {
+        path: file1_path.to_string_lossy().to_string(),
+        content: content1.as_bytes().to_vec(),
+        hash: compute_hash(content1.as_bytes()),
+    });
+
     let file2_path = temp_dir.join("test2.txt");
-    fs::write(&file2_path, "这是第二个测试文件的内容。\nHello from test2!")?;
-    files.push(file2_path.to_string_lossy().to_string());
-    
+    let content2 = "这是第二个测试文件的内容。\nHello from test2!";
+    fs::write(&file2_path, content2)?;
+    files.push(TestFileData {
+        path: file2_path.to_string_lossy().to_string(),
+        content: content2.as_bytes().to_vec(),
+        hash: compute_hash(content2.as_bytes()),
+    });
+
     // 创建 JSON 文件
     let json_path = temp_dir.join("data.json");
-    fs::write(&json_path, r#"{"name": "test", "value": 123}"#)?;
-    files.push(json_path.to_string_lossy().to_string());
-    
+    let content_json = r#"{"name": "test", "value": 123}"#;
+    fs::write(&json_path, content_json)?;
+    files.push(TestFileData {
+        path: json_path.to_string_lossy().to_string(),
+        content: content_json.as_bytes().to_vec(),
+        hash: compute_hash(content_json.as_bytes()),
+    });
+
     // 创建子目录和文件
     let subdir = temp_dir.join("subdir");
     fs::create_dir_all(&subdir)?;
     let nested_path = subdir.join("nested.txt");
-    fs::write(&nested_path, "嵌套目录中的文件")?;
-    files.push(nested_path.to_string_lossy().to_string());
-    
+    let content_nested = "嵌套目录中的文件";
+    fs::write(&nested_path, content_nested)?;
+    files.push(TestFileData {
+        path: nested_path.to_string_lossy().to_string(),
+        content: content_nested.as_bytes().to_vec(),
+        hash: compute_hash(content_nested.as_bytes()),
+    });
+
     // 创建二进制文件
     let bin_path = temp_dir.join("binary.bin");
     let binary_data: Vec<u8> = (0..=255).collect();
-    fs::write(&bin_path, binary_data)?;
-    files.push(bin_path.to_string_lossy().to_string());
-    
+    fs::write(&bin_path, &binary_data)?;
+    files.push(TestFileData {
+        path: bin_path.to_string_lossy().to_string(),
+        content: binary_data.clone(),
+        hash: compute_hash(&binary_data),
+    });
+
     Ok(files)
 }
 
-/// 测试 ZIP 格式压缩
+/// 严格验证压缩和解压循环
+/// 
+/// 验证流程：
+/// 1. 检查压缩后的档案是否存在且非空
+/// 2. 解压档案到临时目录
+/// 3. 逐个比对解压后的文件与原始文件
+/// 4. 验证所有文件的哈希值
+/// 5. 生成详细的验证报告
+fn verify_compression_cycle(
+    archive_path: &Path,
+    original_files: &[TestFileData],
+    extract_dir: &Path,
+    extractor: &BitExtractor,
+    test_name: &str,
+) -> Result<(), String> {
+    // 1. 检查档案是否存在且非空
+    if !archive_path.exists() {
+        return Err(format!("[{}] 压缩档案不存在：{}", test_name, archive_path.display()));
+    }
+
+    let archive_size = fs::metadata(archive_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    
+    if archive_size == 0 {
+        return Err(format!("[{}] 压缩档案为空：{} 字节", test_name, archive_path.display()));
+    }
+
+    println!("[{}] 压缩档案大小：{} 字节", test_name, archive_size);
+
+    // 2. 解压档案
+    let extract_result = extractor.extract(archive_path, extract_dir);
+    if let Err(e) = extract_result {
+        return Err(format!("[{}] 解压失败：{:?}", test_name, e));
+    }
+
+    // 3. 收集解压后的所有文件
+    let mut extracted_files: std::collections::HashMap<String, (Vec<u8>, String)> = std::collections::HashMap::new();
+    if let Err(e) = collect_extracted_files(extract_dir, extract_dir, &mut extracted_files) {
+        return Err(format!("[{}] 收集文件失败：{}", test_name, e));
+    }
+
+    // 4. 验证文件数量
+    if extracted_files.len() != original_files.len() {
+        let original_names: Vec<String> = original_files.iter()
+            .map(|f| std::path::Path::new(&f.path).file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string())
+            .collect();
+
+        let extracted_names: Vec<String> = extracted_files.keys().cloned().collect();
+
+        return Err(format!(
+            "[{}] 文件数量不匹配！预期：{}, 实际：{}\n  预期文件：{:?}\n  实际文件：{:?}",
+            test_name,
+            original_files.len(),
+            extracted_files.len(),
+            original_names,
+            extracted_names
+        ));
+    }
+
+    // 5. 逐个验证文件内容和哈希
+    let mut mismatches = Vec::new();
+    
+    for original in original_files {
+        let file_name = std::path::Path::new(&original.path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        if let Some((extracted_content, extracted_hash)) = extracted_files.get(&file_name) {
+            // 验证哈希
+            if extracted_hash != &original.hash {
+                mismatches.push(format!(
+                    "文件 '{}' 哈希不匹配！\n    预期：{} ({} 字节)\n    实际：{} ({} 字节)",
+                    file_name,
+                    original.hash,
+                    original.content.len(),
+                    extracted_hash,
+                    extracted_content.len()
+                ));
+            }
+            
+            // 验证内容
+            if extracted_content != &original.content {
+                mismatches.push(format!(
+                    "文件 '{}' 内容不匹配！\n    预期：{:?}\n    实际：{:?}",
+                    file_name,
+                    String::from_utf8_lossy(&original.content),
+                    String::from_utf8_lossy(extracted_content)
+                ));
+            }
+        } else {
+            mismatches.push(format!("文件 '{}' 在解压后的目录中不存在", file_name));
+        }
+    }
+
+    // 6. 生成错误报告
+    if !mismatches.is_empty() {
+        let mut error_msg = format!("[{}] 验证失败 - {} 个文件不匹配:\n", test_name, mismatches.len());
+        for mismatch in &mismatches {
+            error_msg.push_str(&format!("  {}\n", mismatch));
+        }
+        return Err(error_msg);
+    }
+
+    println!("✅ [{}] 所有 {} 个文件验证通过", test_name, original_files.len());
+    Ok(())
+}
+
+/// 递归收集解压后的文件
+fn collect_extracted_files(
+    dir: &Path,
+    base_dir: &Path,
+    files: &mut std::collections::HashMap<String, (Vec<u8>, String)>,
+) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() {
+            let content = fs::read(&path)?;
+            let hash = compute_hash(&content);
+            let file_name = path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            files.insert(file_name, (content, hash));
+        } else if path.is_dir() {
+            collect_extracted_files(&path, base_dir, files)?;
+        }
+    }
+    
+    Ok(())
+}
+
+/// 测试 ZIP 格式压缩（严格验证）
 #[test]
 fn test_zip_compression() {
     let lib_path = match get_library_path() {
@@ -83,7 +266,7 @@ fn test_zip_compression() {
             return;
         }
     };
-    
+
     let lib = match BitLibrary::new(Some(lib_path.as_str())) {
         Ok(l) => l,
         Err(e) => {
@@ -91,36 +274,52 @@ fn test_zip_compression() {
             return;
         }
     };
-    
+
     let temp_dir = TempDir::new().expect("创建临时目录失败");
-    let files = create_test_files(temp_dir.path()).expect("创建测试文件失败");
-    
+    let original_files = create_test_files(temp_dir.path()).expect("创建测试文件失败");
+
+    println!("创建 {} 个测试文件:", original_files.len());
+    for file in &original_files {
+        let file_name = std::path::Path::new(&file.path).file_name().unwrap_or_default().to_string_lossy();
+        println!("  - {}: {} 字节 [{}]", file_name, file.content.len(), file.hash);
+    }
+
     let output_path = temp_dir.path().join("output.zip");
-    
-    // 注意：当前 compress 方法尚未实现，这里测试 API 结构
-    // 实际使用时应该是：
-    // let mut compressor = BitCompressor::new(&lib, CompressionFormat::Zip);
-    // compressor.compression_level(CompressionLevel::Normal);
-    // compressor.compress(&files, &output_path).expect("压缩失败");
-    
+
     // 使用系统 zip 命令创建测试档案
+    // 压缩整个目录以包含子目录
     let zip_result = std::process::Command::new("zip")
+        .arg("-r")
         .arg(&output_path)
-        .args(&files)
+        .arg(".")
+        .current_dir(temp_dir.path())
         .output();
-    
+
     match zip_result {
         Ok(output) if output.status.success() => {
+            // 1. 验证档案存在
             assert!(output_path.exists(), "ZIP 文件创建失败");
-            
-            // 验证解压
+
+            // 2. 严格验证压缩循环
             let extract_dir = temp_dir.path().join("extracted");
             let extractor = BitExtractor::new(&lib, ExtractFormat::Zip);
-            let extract_result = extractor.extract(&output_path, &extract_dir);
-            assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
+            
+            let verify_result = verify_compression_cycle(
+                &output_path,
+                &original_files,
+                &extract_dir,
+                &extractor,
+                "test_zip_compression",
+            );
+
+            // 3. 断言验证通过
+            assert!(verify_result.is_ok(), "ZIP 压缩验证失败：{}", verify_result.unwrap_err());
         }
-        _ => {
-            eprintln!("跳过测试：zip 命令不可用");
+        Ok(output) => {
+            eprintln!("跳过测试：zip 命令执行失败 - {}", String::from_utf8_lossy(&output.stderr));
+        }
+        Err(e) => {
+            eprintln!("跳过测试：zip 命令不可用 - {}", e);
         }
     }
 }
@@ -135,7 +334,7 @@ fn test_7z_compression() {
             return;
         }
     };
-    
+
     let lib = match BitLibrary::new(Some(lib_path.as_str())) {
         Ok(l) => l,
         Err(e) => {
@@ -143,17 +342,22 @@ fn test_7z_compression() {
             return;
         }
     };
-    
+
     let temp_dir = TempDir::new().expect("创建临时目录失败");
     let files = create_test_files(temp_dir.path()).expect("创建测试文件失败");
-    
+
     let output_path = temp_dir.path().join("output.7z");
-    
+
     // 使用系统 7z 命令创建测试档案
+    let file_paths: Vec<&str> = files.iter()
+        .map(|f| std::path::Path::new(&f.path).file_name().unwrap().to_str().unwrap())
+        .collect();
+
     let _7z_result = std::process::Command::new("7z")
         .arg("a")
         .arg(&output_path)
-        .args(&files)
+        .args(&file_paths)
+        .current_dir(temp_dir.path())
         .output();
     
     match _7z_result {
@@ -628,18 +832,23 @@ fn test_wim_format() {
             return;
         }
     };
-    
+
     let temp_dir = TempDir::new().expect("创建临时目录失败");
     let files = create_test_files(temp_dir.path()).expect("创建测试文件失败");
-    
+
     let output_path = temp_dir.path().join("output.wim");
-    
+
     // 使用系统 7z 命令创建 Wim 档案
+    let file_paths: Vec<&str> = files.iter()
+        .map(|f| std::path::Path::new(&f.path).file_name().unwrap().to_str().unwrap())
+        .collect();
+
     let wim_result = std::process::Command::new("7z")
         .arg("a")
         .arg(&output_path)
         .arg("-tWIM")
-        .args(&files)
+        .args(&file_paths)
+        .current_dir(temp_dir.path())
         .output();
     
     match wim_result {
