@@ -34,6 +34,8 @@ use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Input item representing a file to be compressed
 #[derive(Clone)]
@@ -99,17 +101,20 @@ impl ExtendedInputItem {
     }
 }
 
-/// Progress callback type - receives (completed, total)
-pub type ProgressCallback = Box<dyn Fn(u64, u64) + Send + Sync>;
+/// Progress callback type - receives (completed, total), returns true to continue
+pub type ProgressCallback = Arc<Mutex<dyn Fn(u64, u64) -> bool + Send + Sync>>;
 
 /// Ratio callback type - receives (in_size, out_size)
-pub type RatioCallback = Box<dyn Fn(u64, u64) + Send + Sync>;
+pub type RatioCallback = Arc<Mutex<dyn Fn(u64, u64) + Send + Sync>>;
 
 /// File callback type - receives file path
-pub type FileCallback = Box<dyn Fn(&str) + Send + Sync>;
+pub type FileCallback = Arc<Mutex<dyn Fn(&str) + Send + Sync>>;
 
 /// Password callback type - returns password
-pub type PasswordCallback = Box<dyn Fn() -> Option<String> + Send + Sync>;
+pub type PasswordCallback = Arc<Mutex<dyn Fn() -> String + Send + Sync>>;
+
+/// Total callback type - receives total size
+pub type TotalCallbackType = Arc<Mutex<dyn Fn(u64) + Send + Sync>>;
 
 /// Main callback object containing all data
 /// This is the "master" object that owns all the data
@@ -134,6 +139,7 @@ pub struct UpdateCallback {
     ref_count: UnsafeCell<u32>,
     password: Option<String>,
     // Callbacks
+    total_callback: Option<TotalCallbackType>,
     progress_callback: Option<ProgressCallback>,
     ratio_callback: Option<RatioCallback>,
     file_callback: Option<FileCallback>,
@@ -318,6 +324,7 @@ impl UpdateCallback {
                 input_items,
                 ref_count: UnsafeCell::new(1),
                 password,
+                total_callback: None,
                 progress_callback: None,
                 ratio_callback: None,
                 file_callback: None,
@@ -330,6 +337,7 @@ impl UpdateCallback {
     pub fn with_callbacks(
         input_items: Vec<InputItem>,
         password: Option<String>,
+        total_callback: Option<TotalCallbackType>,
         progress_callback: Option<ProgressCallback>,
         ratio_callback: Option<RatioCallback>,
         file_callback: Option<FileCallback>,
@@ -337,23 +345,22 @@ impl UpdateCallback {
     ) -> Self {
         init_vtables();
 
-        unsafe {
-            UpdateCallback {
-                unknown_vtable: UNKNOWN_VTABLE.as_ref().unwrap() as *const _,
-                progress_vtable: PROGRESS_VTABLE.as_ref().unwrap() as *const _,
-                update_callback_vtable: UPDATE_CALLBACK_VTABLE.as_ref().unwrap() as *const _,
-                update_callback2_vtable: UPDATE_CALLBACK2_VTABLE.as_ref().unwrap() as *const _,
-                compress_progress_vtable: COMPRESS_PROGRESS_VTABLE.as_ref().unwrap() as *const _,
-                crypto_password_vtable: CRYPTO_PASSWORD_VTABLE.as_ref().unwrap() as *const _,
-                crypto_password2_vtable: CRYPTO_PASSWORD2_VTABLE.as_ref().unwrap() as *const _,
-                input_items,
-                ref_count: UnsafeCell::new(1),
-                password,
-                progress_callback,
-                ratio_callback,
-                file_callback,
-                password_callback,
-            }
+        UpdateCallback {
+            unknown_vtable: unsafe { UNKNOWN_VTABLE.as_ref().unwrap() as *const _ },
+            progress_vtable: unsafe { PROGRESS_VTABLE.as_ref().unwrap() as *const _ },
+            update_callback_vtable: unsafe { UPDATE_CALLBACK_VTABLE.as_ref().unwrap() as *const _ },
+            update_callback2_vtable: unsafe { UPDATE_CALLBACK2_VTABLE.as_ref().unwrap() as *const _ },
+            compress_progress_vtable: unsafe { COMPRESS_PROGRESS_VTABLE.as_ref().unwrap() as *const _ },
+            crypto_password_vtable: unsafe { CRYPTO_PASSWORD_VTABLE.as_ref().unwrap() as *const _ },
+            crypto_password2_vtable: unsafe { CRYPTO_PASSWORD2_VTABLE.as_ref().unwrap() as *const _ },
+            input_items,
+            ref_count: UnsafeCell::new(1),
+            password,
+            total_callback,
+            progress_callback,
+            ratio_callback,
+            file_callback,
+            password_callback,
         }
     }
 
@@ -560,12 +567,21 @@ impl UpdateCallback {
         size: u64,
     ) -> HRESULT {
         let callback = Self::from_progress(this);
-        
+
+        // Call total callback if registered
+        if let Some(ref total_cb) = (*callback).total_callback {
+            if let Ok(cb) = total_cb.lock() {
+                cb(size);
+            }
+        }
+
         // Call progress callback if registered
         if let Some(ref progress_cb) = (*callback).progress_callback {
-            progress_cb(0, size);
+            if let Ok(cb) = progress_cb.lock() {
+                cb(0, size);
+            }
         }
-        
+
         0 // S_OK
     }
 
@@ -574,12 +590,14 @@ impl UpdateCallback {
         size: u64,
     ) -> HRESULT {
         let callback = Self::from_update_callback(this);
-        
-        // Call progress callback if registered
-        if let Some(ref progress_cb) = (*callback).progress_callback {
-            progress_cb(0, size);
+
+        // Call total callback if registered
+        if let Some(ref total_cb) = (*callback).total_callback {
+            if let Ok(cb) = total_cb.lock() {
+                cb(size);
+            }
         }
-        
+
         0 // S_OK
     }
 
@@ -588,12 +606,14 @@ impl UpdateCallback {
         size: u64,
     ) -> HRESULT {
         let callback = Self::from_update_callback2(this);
-        
-        // Call progress callback if registered
-        if let Some(ref progress_cb) = (*callback).progress_callback {
-            progress_cb(0, size);
+
+        // Call total callback if registered
+        if let Some(ref total_cb) = (*callback).total_callback {
+            if let Ok(cb) = total_cb.lock() {
+                cb(size);
+            }
         }
-        
+
         0 // S_OK
     }
 
@@ -602,13 +622,15 @@ impl UpdateCallback {
         complete_value: *const u64,
     ) -> HRESULT {
         let callback = Self::from_progress(this);
-        
+
         // Call progress callback if registered
         if let Some(ref progress_cb) = (*callback).progress_callback {
             let completed = if !complete_value.is_null() { *complete_value } else { 0 };
-            progress_cb(completed, 0); // Total is unknown here
+            if let Ok(cb) = progress_cb.lock() {
+                cb(completed, 0);
+            }
         }
-        
+
         0 // S_OK
     }
 
@@ -617,13 +639,15 @@ impl UpdateCallback {
         complete_value: *const u64,
     ) -> HRESULT {
         let callback = Self::from_update_callback(this);
-        
+
         // Call progress callback if registered
         if let Some(ref progress_cb) = (*callback).progress_callback {
             let completed = if !complete_value.is_null() { *complete_value } else { 0 };
-            progress_cb(completed, 0);
+            if let Ok(cb) = progress_cb.lock() {
+                cb(completed, 0);
+            }
         }
-        
+
         0 // S_OK
     }
 
@@ -632,11 +656,13 @@ impl UpdateCallback {
         complete_value: *const u64,
     ) -> HRESULT {
         let callback = Self::from_update_callback2(this);
-        
+
         // Call progress callback if registered
         if let Some(ref progress_cb) = (*callback).progress_callback {
             let completed = if !complete_value.is_null() { *complete_value } else { 0 };
-            progress_cb(completed, 0);
+            if let Ok(cb) = progress_cb.lock() {
+                cb(completed, 0);
+            }
         }
 
         0 // S_OK
@@ -804,7 +830,9 @@ impl UpdateCallback {
         // Call file callback if registered (matching bit7z behavior)
         if let Some(ref file_cb) = (*callback).file_callback {
             let path_str = item.path.to_string_lossy();
-            file_cb(&path_str);
+            if let Ok(cb) = file_cb.lock() {
+                cb(&path_str);
+            }
         }
 
         // Directories don't need a stream
@@ -909,10 +937,11 @@ impl UpdateCallback {
         }
 
         let callback = Self::from_crypto_password2(this);
-        
+
         // Try to get password from callback first
         if let Some(ref password_cb) = (*callback).password_callback {
-            if let Some(pwd) = password_cb() {
+            if let Ok(cb) = password_cb.lock() {
+                let pwd = cb();
                 *password_is_defined = 1;
                 let bstr = alloc_bstr_from_utf32(&pwd);
                 if bstr.is_null() {
@@ -1007,14 +1036,16 @@ impl UpdateCallback {
         out_size: *const u64,
     ) -> HRESULT {
         let callback = Self::from_compress_progress(this);
-        
+
         // Call ratio callback if registered
         if let Some(ref ratio_cb) = (*callback).ratio_callback {
             let in_val = if !in_size.is_null() { *in_size } else { 0 };
             let out_val = if !out_size.is_null() { *out_size } else { 0 };
-            ratio_cb(in_val, out_val);
+            if let Ok(cb) = ratio_cb.lock() {
+                cb(in_val, out_val);
+            }
         }
-        
+
         0 // S_OK
     }
 }

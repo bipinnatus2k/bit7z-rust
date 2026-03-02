@@ -48,12 +48,21 @@ pub enum Bit7zError {
     
     #[error("Feature not supported by format: {0}")]
     FeatureNotSupported(String),
-    
+
     #[error("Archive is corrupted or invalid")]
     CorruptedArchive,
-    
+
     #[error("Operation failed: {0}")]
     UnknownError(String),
+
+    #[error("Invalid item index: {0}")]
+    InvalidItemIndex(u32),
+
+    #[error("Archive integrity check failed: {0}")]
+    ArchiveIntegrityCheckFailed(String),
+
+    #[error("Failed to create temporary file: {0}")]
+    TempFileCreationFailed(String),
 }
 
 impl From<crate::ffi::LibraryError> for Bit7zError {

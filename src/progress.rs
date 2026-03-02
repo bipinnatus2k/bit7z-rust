@@ -27,7 +27,7 @@ pub struct SimpleProgress {
 }
 
 impl SimpleProgress {
-    /// Create a new simple progress tracker
+    /// Create new simple progress tracker
     pub fn new() -> Self {
         SimpleProgress {
             total: 0,

@@ -95,13 +95,13 @@ impl BitLibrary {
     }
     
     /// Create an input archive object for specified format
-    pub unsafe fn create_in_archive(&self, format: &GUID) -> Result<NonNull<IInArchive>, LibraryError> {
+    pub fn create_in_archive(&self, format: &GUID) -> Result<NonNull<IInArchive>, LibraryError> {
         let mut archive_ptr: *mut c_void = std::ptr::null_mut();
-        let result = (self.create_object)(
+        let result = unsafe { (self.create_object)(
             format as *const GUID,
             &IID_IInArchive as *const GUID,
             &mut archive_ptr as *mut *mut c_void,
-        );
+        ) };
         
         if result != 0 {
             return Err(LibraryError::CreateFailed(result));
@@ -111,13 +111,13 @@ impl BitLibrary {
     }
     
     /// Create an output archive object for specified format
-    pub unsafe fn create_out_archive(&self, format: &GUID) -> Result<NonNull<IOutArchive>, LibraryError> {
+    pub fn create_out_archive(&self, format: &GUID) -> Result<NonNull<IOutArchive>, LibraryError> {
         let mut archive_ptr: *mut c_void = std::ptr::null_mut();
-        let result = (self.create_object)(
+        let result = unsafe { (self.create_object)(
             format as *const GUID,
             &IID_IOutArchive as *const GUID,
             &mut archive_ptr as *mut *mut c_void,
-        );
+        ) };
         
         if result != 0 {
             return Err(LibraryError::CreateFailed(result));

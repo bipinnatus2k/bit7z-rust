@@ -2,7 +2,7 @@
 //!
 //! OpenCallback implements multiple interfaces:
 //! - IArchiveOpenCallback
-//! - IArchiveOpenVolumeCallback  
+//! - IArchiveOpenVolumeCallback
 //! - IArchiveOpenSetSubArchiveName
 //! - ICryptoGetTextPassword
 
@@ -19,6 +19,23 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::ptr;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+/// Total callback type - called with total size
+pub type TotalCallback = Arc<Mutex<dyn FnMut(u64) + Send + Sync>>;
+
+/// Progress callback type - called with processed size, returns true to continue
+pub type ProgressCallback = Arc<Mutex<dyn FnMut(u64) -> bool + Send + Sync>>;
+
+/// Ratio callback type - called with input and output sizes
+pub type RatioCallback = Arc<Mutex<dyn FnMut(u64, u64) + Send + Sync>>;
+
+/// File callback type - called with file path
+pub type FileCallback = Arc<Mutex<dyn FnMut(String) + Send + Sync>>;
+
+/// Password callback type - returns password string
+pub type PasswordCallback = Arc<Mutex<dyn FnMut() -> String + Send + Sync>>;
 
 /// Open callback for 7-Zip archive opening
 /// Memory layout: vtable must be first to match C++ COM object layout
@@ -27,6 +44,7 @@ pub struct OpenCallback {
     vtable: Pin<Box<OpenCallbackVTable>>,
     archive_path: PathBuf,
     ref_count: UnsafeCell<u32>,
+    password_callback: Option<PasswordCallback>,
 }
 
 /// Unified vtable structure containing all interface methods
@@ -46,6 +64,11 @@ struct OpenCallbackVTable {
 impl OpenCallback {
     /// Create a new OpenCallback for the given archive path
     pub fn new(archive_path: &Path) -> Self {
+        Self::with_password_callback(archive_path, None)
+    }
+
+    /// Create a new OpenCallback with password callback
+    pub fn with_password_callback(archive_path: &Path, password_callback: Option<PasswordCallback>) -> Self {
         let vtable = Box::pin(OpenCallbackVTable {
             open_callback_vtable: crate::ffi::IArchiveOpenCallbackVTable {
                 base: crate::ffi::IUnknownVTable {
@@ -87,6 +110,7 @@ impl OpenCallback {
             vtable,
             archive_path: archive_path.to_path_buf(),
             ref_count: UnsafeCell::new(1),
+            password_callback,
         }
     }
 
@@ -223,9 +247,33 @@ impl OpenCallback {
     }
 
     unsafe extern "system" fn get_text_password(
-        _this: *mut ICryptoGetTextPassword,
-        _password: *mut *mut u16,
+        this: *mut ICryptoGetTextPassword,
+        password: *mut *mut u16,
     ) -> HRESULT {
+        if password.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
+        let callback = this as *const OpenCallback;
+        
+        // Check if we have a password callback
+        if let Some(ref pwd_callback) = (*callback).password_callback {
+            // Call the callback to get password
+            if let Ok(mut cb) = pwd_callback.lock() {
+                let pwd_string = cb();
+                
+                // Convert password to UTF-16 BSTR
+                // alloc_bstr expects &[u16], so we need to convert the string
+                let pwd_utf16: Vec<u16> = pwd_string.encode_utf16().collect();
+                let bstr = crate::ffi::variant::alloc_bstr(&pwd_utf16);
+                
+                if !bstr.is_null() {
+                    *password = bstr;
+                    return 0; // S_OK
+                }
+            }
+        }
+
         -2147467262 // E_NOINTERFACE - no password support
     }
 }

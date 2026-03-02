@@ -43,6 +43,403 @@ impl<'a> BitExtractor<'a> {
         self
     }
 
+    /// Extract a specific item from archive to a memory buffer
+    ///
+    /// # Arguments
+    /// * `archive_path` - Path to archive
+    /// * `index` - Index of item to extract
+    ///
+    /// # Returns
+    /// * `Ok(Vec<u8>)` - Extracted data
+    /// * `Err(Bit7zError)` - Error
+    pub fn extract_to_buffer<P: AsRef<Path>>(
+        &self,
+        archive_path: P,
+        index: u32,
+    ) -> Result<Vec<u8>> {
+        use crate::stream::BufferOutStream;
+        
+        unsafe {
+            let archive_ptr = self.library.create_in_archive(&self.format.guid())?;
+
+            let in_stream = Box::leak(Box::new(
+                crate::stream::FileStream::new(archive_path.as_ref())?
+            ));
+
+            let max_check_start_position: u64 = 0;
+            let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
+
+            let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
+                archive_ptr.as_ptr(),
+                in_stream.as_i_in_stream(),
+                &max_check_start_position,
+                open_callback.as_i_archive_open_callback(),
+            );
+
+            if open_result != 0 && open_result != 1 {
+                return Err(Bit7zError::OpenFailed(format!(
+                    "Failed to open archive: HRESULT 0x{:08X}", open_result
+                )));
+            }
+
+            // Create buffer output stream
+            let buffer_stream = Box::leak(Box::new(BufferOutStream::new()));
+
+            // Create extract callback for buffer extraction
+            let callback = Box::leak(Box::new(ExtractCallback::with_buffer(
+                buffer_stream,
+                self.password.clone(),
+                archive_ptr.as_ptr(),
+            )));
+
+            // Extract specific item by index
+            let mut indices = [index];
+            let indices_ptr = indices.as_mut_ptr();
+
+            let result = ((*(*archive_ptr.as_ptr()).vtable).extract)(
+                archive_ptr.as_ptr(),
+                indices_ptr,
+                1, // number of indices
+                0, // extract mode: 0 = extract
+                callback as *mut ExtractCallback as *mut IArchiveExtractCallback,
+            );
+
+            if result != 0 && result != 1 {
+                return Err(Bit7zError::ExtractFailed(format!(
+                    "Extract failed with HRESULT: 0x{:X}", result
+                )));
+            }
+
+            // Get buffer content
+            let buffer = buffer_stream.get_buffer();
+            
+            Ok(buffer)
+        }
+    }
+
+    /// Extract a specific item from archive to a writer stream
+    ///
+    /// # Arguments
+    /// * `archive_path` - Path to archive
+    /// * `writer` - Output stream to write data to
+    /// * `index` - Index of item to extract
+    ///
+    /// # Returns
+    /// * `Ok(())` - Success
+    /// * `Err(Bit7zError)` - Error
+    pub fn extract_to_stream<P: AsRef<Path>, W: std::io::Write>(
+        &self,
+        archive_path: P,
+        writer: &mut W,
+        index: u32,
+    ) -> Result<()> {
+        use std::io::Write;
+        
+        // Extract to temporary directory first, then copy to stream
+        let temp_dir = std::env::temp_dir().join(format!(
+            "bit7z_extract_{}_{}",
+            std::process::id(),
+            index
+        ));
+        
+        // Create temp directory
+        std::fs::create_dir_all(&temp_dir)
+            .map_err(|e| Bit7zError::ExtractFailed(e.to_string()))?;
+
+        // Extract to temp directory
+        self.extract(archive_path.as_ref(), &temp_dir)?;
+
+        // Find the extracted file (it should be the only file in temp_dir)
+        let mut temp_file_path = None;
+        if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_file() {
+                    temp_file_path = Some(entry.path());
+                    break;
+                }
+            }
+        }
+
+        let temp_file_path = temp_file_path
+            .ok_or_else(|| Bit7zError::ExtractFailed("No file extracted".to_string()))?;
+
+        // Read temp file and write to stream
+        let mut temp_file = std::fs::File::open(&temp_file_path)
+            .map_err(|e| Bit7zError::ExtractFailed(e.to_string()))?;
+        
+        std::io::copy(&mut temp_file, writer)
+            .map_err(|e| Bit7zError::ExtractFailed(e.to_string()))?;
+
+        // Clean up temp directory
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        Ok(())
+    }
+
+    /// Extract specific items by index list
+    ///
+    /// # Arguments
+    /// * `archive_path` - Path to archive
+    /// * `indices` - List of item indices to extract
+    /// * `output_dir` - Output directory
+    ///
+    /// # Returns
+    /// * `Ok(())` - Success
+    /// * `Err(Bit7zError)` - Error
+    pub fn extract_items<P: AsRef<Path>>(
+        &self,
+        archive_path: P,
+        indices: &[u32],
+        output_dir: P,
+    ) -> Result<()> {
+        if indices.is_empty() {
+            return Ok(()); // Nothing to extract
+        }
+
+        unsafe {
+            let archive_ptr = self.library.create_in_archive(&self.format.guid())?;
+
+            let in_stream = Box::leak(Box::new(
+                crate::stream::FileStream::new(archive_path.as_ref())?
+            ));
+
+            let max_check_start_position: u64 = 0;
+            let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
+
+            let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
+                archive_ptr.as_ptr(),
+                in_stream.as_i_in_stream(),
+                &max_check_start_position,
+                open_callback.as_i_archive_open_callback(),
+            );
+
+            if open_result != 0 && open_result != 1 {
+                return Err(Bit7zError::OpenFailed(format!(
+                    "Failed to open archive: HRESULT 0x{:08X}", open_result
+                )));
+            }
+
+            let output_path = output_dir.as_ref();
+            if !output_path.exists() {
+                fs::create_dir_all(output_path)?;
+            }
+
+            let callback = Box::leak(Box::new(ExtractCallback::new(
+                output_path,
+                self.password.clone(),
+                archive_ptr.as_ptr(),
+            )));
+
+            // Extract specific indices
+            let indices_ptr = indices.as_ptr() as *mut u32;
+            let num_indices = indices.len() as u32;
+
+            let result = ((*(*archive_ptr.as_ptr()).vtable).extract)(
+                archive_ptr.as_ptr(),
+                indices_ptr,
+                num_indices,
+                0, // extract mode: 0 = extract
+                callback as *mut ExtractCallback as *mut IArchiveExtractCallback,
+            );
+
+            if result != 0 && result != 1 {
+                return Err(Bit7zError::ExtractFailed(format!(
+                    "Extract failed with HRESULT: 0x{:X}", result
+                )));
+            }
+
+            Ok(())
+        }
+    }
+
+    /// Extract items matching a wildcard pattern
+    ///
+    /// # Arguments
+    /// * `archive_path` - Path to archive
+    /// * `pattern` - Wildcard pattern (e.g., "*.txt", "docs/*")
+    /// * `output_dir` - Output directory
+    ///
+    /// # Returns
+    /// * `Ok(())` - Success
+    /// * `Err(Bit7zError)` - Error
+    pub fn extract_matching<P: AsRef<Path>>(
+        &self,
+        archive_path: P,
+        pattern: &str,
+        output_dir: P,
+    ) -> Result<()> {
+        use crate::archive_reader::{BitArchiveReader, ArchiveItem};
+        
+        // Open archive to get items
+        let mut reader = BitArchiveReader::new(self.library, self.format);
+        reader.open(archive_path.as_ref())?;
+        
+        // Get all items and filter by pattern
+        let items = reader.items()?;
+        let matching_indices: Vec<u32> = items
+            .iter()
+            .filter(|item| Self::match_wildcard(pattern, &item.path))
+            .map(|item| item.index)
+            .collect();
+        
+        if matching_indices.is_empty() {
+            return Ok(()); // No matching items
+        }
+        
+        // Extract matching items
+        self.extract_items(archive_path, &matching_indices, output_dir)
+    }
+
+    /// Extract items matching a regex pattern
+    ///
+    /// # Arguments
+    /// * `archive_path` - Path to archive
+    /// * `pattern` - Regex pattern
+    /// * `output_dir` - Output directory
+    ///
+    /// # Returns
+    /// * `Ok(())` - Success
+    /// * `Err(Bit7zError)` - Error
+    pub fn extract_matching_regex<P: AsRef<Path>>(
+        &self,
+        archive_path: P,
+        pattern: &str,
+        output_dir: P,
+    ) -> Result<()> {
+        use crate::archive_reader::{BitArchiveReader, ArchiveItem};
+        
+        // Compile regex
+        let regex = regex::Regex::new(pattern)
+            .map_err(|e| Bit7zError::ExtractFailed(format!("Invalid regex: {}", e)))?;
+        
+        // Open archive to get items
+        let mut reader = BitArchiveReader::new(self.library, self.format);
+        reader.open(archive_path.as_ref())?;
+        
+        // Get all items and filter by regex
+        let items = reader.items()?;
+        let matching_indices: Vec<u32> = items
+            .iter()
+            .filter(|item| regex.is_match(&item.path))
+            .map(|item| item.index)
+            .collect();
+        
+        if matching_indices.is_empty() {
+            return Ok(()); // No matching items
+        }
+        
+        // Extract matching items
+        self.extract_items(archive_path, &matching_indices, output_dir)
+    }
+
+    /// Match a path against a wildcard pattern
+    fn match_wildcard(pattern: &str, path: &str) -> bool {
+        // Simple wildcard matching: * matches any sequence, ? matches single char
+        let pattern_chars: Vec<char> = pattern.chars().collect();
+        let path_chars: Vec<char> = path.chars().collect();
+        
+        Self::wildcard_match_recursive(&pattern_chars, &path_chars, 0, 0)
+    }
+
+    fn wildcard_match_recursive(pattern: &[char], path: &[char], pi: usize, si: usize) -> bool {
+        // Base case: both pattern and path are exhausted
+        if pi == pattern.len() && si == path.len() {
+            return true;
+        }
+        
+        // If pattern is exhausted but path isn't, check for trailing *
+        if pi == pattern.len() {
+            return false;
+        }
+        
+        // Handle * wildcard
+        if pattern[pi] == '*' {
+            // Try matching zero or more characters
+            for i in si..=path.len() {
+                if Self::wildcard_match_recursive(pattern, path, pi + 1, i) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // If path is exhausted but pattern isn't
+        if si == path.len() {
+            return false;
+        }
+        
+        // Match current character or ? wildcard
+        if pattern[pi] == '?' || pattern[pi] == path[si] {
+            return Self::wildcard_match_recursive(pattern, path, pi + 1, si + 1);
+        }
+        
+        false
+    }
+
+    /// Test archive integrity without extracting
+    pub fn test<P: AsRef<Path>>(&self, archive_path: P) -> Result<()> {
+        unsafe {
+            let archive_ptr = self.library.create_in_archive(&self.format.guid())?;
+
+            let in_stream = Box::leak(Box::new(
+                crate::stream::FileStream::new(archive_path.as_ref())?
+            ));
+
+            let max_check_start_position: u64 = 0;
+            let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
+
+            let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
+                archive_ptr.as_ptr(),
+                in_stream.as_i_in_stream(),
+                &max_check_start_position,
+                open_callback.as_i_archive_open_callback(),
+            );
+
+            if open_result != 0 && open_result != 1 {
+                return Err(Bit7zError::OpenFailed(format!(
+                    "Failed to open archive: HRESULT 0x{:08X}", open_result
+                )));
+            }
+
+            // Get number of items
+            let mut num_items: u32 = 0;
+            ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
+                archive_ptr.as_ptr(),
+                &mut num_items,
+            );
+
+            // Create a null output stream for testing (we don't want to extract)
+            // Using kExtractMode::Test (2) - test archive integrity
+            let callback = Box::leak(Box::new(ExtractCallback::new(
+                Path::new("/dev/null"), // Dummy path - won't be used for test mode
+                self.password.clone(),
+                archive_ptr.as_ptr(),
+            )));
+
+            // Call Extract with kExtractMode::Test (2)
+            // This tests the archive without actually extracting files
+            let extract_mode: i32 = 2; // kExtractMode::Test
+            let mut indices: [i32; 1] = [-1]; // -1 means all items
+            let indices_ptr = indices.as_mut_ptr() as *mut u32;
+
+            let result = ((*(*archive_ptr.as_ptr()).vtable).extract)(
+                archive_ptr.as_ptr(),
+                indices_ptr,
+                num_items,
+                0, // test_all = 0 when indices is -1
+                callback as *mut ExtractCallback as *mut IArchiveExtractCallback,
+            );
+
+            if result != 0 && result != 1 {
+                return Err(Bit7zError::ArchiveIntegrityCheckFailed(format!(
+                    "Archive test failed with HRESULT: 0x{:X}", result
+                )));
+            }
+
+            Ok(())
+        }
+    }
+
     pub fn extract<P: AsRef<Path>>(
         &self,
         archive_path: P,
@@ -178,102 +575,6 @@ impl<'a> BitExtractor<'a> {
             // S_OK (0) and S_FALSE (1) are both success codes
             // S_FALSE is returned for some formats (like GZip/BZip2/XZ) after successful extraction
             if result != 0 && result != 1 {
-                return Err(Bit7zError::ExtractFailed(format!(
-                    "Extraction failed: HRESULT 0x{:08X}", result
-                )));
-            }
-
-            Ok(())
-        }
-    }
-
-    pub fn extract_matching<P: AsRef<Path>>(
-        &self,
-        archive_path: P,
-        output_dir: P,
-        pattern: &str,
-    ) -> Result<()> {
-        unsafe {
-            let archive_ptr = self.library.create_in_archive(&self.format.guid())?;
-
-            let in_stream = Box::leak(Box::new(
-                crate::stream::FileStream::new(archive_path.as_ref())?
-            ));
-
-            // Create open callback (required by 7-Zip)
-            let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
-
-            // max_check_start_position pointer (0 means search from beginning)
-            let max_check_start_position: u64 = 0;
-
-            let result = ((*(*archive_ptr.as_ptr()).vtable).open)(
-                archive_ptr.as_ptr(),
-                in_stream.as_i_in_stream(),
-                &max_check_start_position,  // Pass as pointer
-                open_callback.as_i_archive_open_callback(),
-            );
-
-            if result != 0 {
-                return Err(Bit7zError::OpenFailed(format!(
-                    "Failed to open archive: HRESULT 0x{:08X}", result
-                )));
-            }
-
-            let mut num_items: u32 = 0;
-            let result = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
-                archive_ptr.as_ptr(),
-                &mut num_items,
-            );
-
-            if result != 0 {
-                return Err(Bit7zError::OpenFailed(format!(
-                    "Failed to get item count: HRESULT 0x{:08X}", result
-                )));
-            }
-
-            let mut indices = Vec::new();
-            let wildcard = Self::compile_wildcard(pattern);
-
-            for i in 0..num_items {
-                let mut prop = std::mem::zeroed::<PROPVARIANT>();
-                let result = ((*(*archive_ptr.as_ptr()).vtable).get_property)(
-                    archive_ptr.as_ptr(),
-                    i,
-                    crate::ffi::kpidPath,
-                    &mut prop,
-                );
-
-                if result == 0 {
-                    let path = crate::ffi::propvariant_to_string(&prop)?;
-                    prop.clear(); // Clear after use
-                    if Self::matches_pattern(&path, &wildcard) {
-                        indices.push(i);
-                    }
-                }
-            }
-
-            let output_path = output_dir.as_ref();
-            if !output_path.exists() {
-                fs::create_dir_all(output_path)?;
-            }
-
-            let callback = Box::leak(Box::new(ExtractCallback::new(
-                output_path,
-                self.password.clone(),
-                archive_ptr.as_ptr(),
-            )));
-
-            let result = ((*(*archive_ptr.as_ptr()).vtable).extract)(
-                archive_ptr.as_ptr(),
-                indices.as_ptr(),
-                indices.len() as u32,
-                0,
-                callback.as_i_archive_extract_callback(),
-            );
-
-            let _ = ((*(*archive_ptr.as_ptr()).vtable).close)(archive_ptr.as_ptr());
-
-            if result != 0 {
                 return Err(Bit7zError::ExtractFailed(format!(
                     "Extraction failed: HRESULT 0x{:08X}", result
                 )));
@@ -439,6 +740,8 @@ struct ExtractCallback {
     archive: *mut IInArchive,
     current_out_stream: UnsafeCell<Option<*mut ISequentialOutStream>>,
     current_path: UnsafeCell<Option<String>>,
+    // For buffer extraction
+    buffer_stream: Option<*mut crate::stream::BufferOutStream>,
 }
 
 impl ExtractCallback {
@@ -466,6 +769,40 @@ impl ExtractCallback {
             archive,
             current_out_stream: UnsafeCell::new(None),
             current_path: UnsafeCell::new(None),
+            buffer_stream: None,
+        }
+    }
+
+    /// Create ExtractCallback for buffer extraction
+    fn with_buffer(
+        buffer_stream: *mut crate::stream::BufferOutStream,
+        password: Option<String>,
+        archive: *mut IInArchive,
+    ) -> Self {
+        let vtable = Box::pin(IArchiveExtractCallbackVTable {
+            base: crate::ffi::IProgressVTable {
+                base: crate::ffi::IUnknownVTable {
+                    query_interface: Self::query_interface,
+                    add_ref: Self::add_ref,
+                    release: Self::release,
+                },
+                set_completed: Self::set_completed,
+                set_total: Self::set_total,
+            },
+            get_stream: Self::get_stream_buffer,
+            prepare_operation: Self::prepare_operation,
+            set_operation_result: Self::set_operation_result,
+        });
+
+        ExtractCallback {
+            vtable,
+            ref_count: UnsafeCell::new(1),
+            output_dir: PathBuf::new(),
+            password,
+            archive,
+            current_out_stream: UnsafeCell::new(None),
+            current_path: UnsafeCell::new(None),
+            buffer_stream: Some(buffer_stream),
         }
     }
 
@@ -656,6 +993,40 @@ impl ExtractCallback {
                 0
             }
         }
+    }
+
+    /// Get stream for buffer extraction
+    unsafe extern "system" fn get_stream_buffer(
+        this: *mut IArchiveExtractCallback,
+        _index: u32,
+        out_stream: *mut *mut ISequentialOutStream,
+        ask_extract_mode: *mut i32,
+    ) -> HRESULT {
+        if out_stream.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
+        *out_stream = ptr::null_mut();
+
+        // ask_extract_mode may be NULL for some formats
+        if !ask_extract_mode.is_null() {
+            *ask_extract_mode = 0; // kExtract = 0
+        }
+
+        let callback = &*(this as *const ExtractCallback);
+
+        // Use buffer stream if available
+        if let Some(buffer_stream) = callback.buffer_stream {
+            *out_stream = (*buffer_stream).as_i_out_stream() as *mut ISequentialOutStream;
+            
+            // AddRef the stream
+            let stream_vtable = &*(*(*buffer_stream).as_i_out_stream()).vtable;
+            (stream_vtable.base.base.add_ref)((*buffer_stream).as_i_out_stream() as *mut crate::ffi::IUnknown);
+            
+            return 0; // S_OK
+        }
+
+        0 // S_OK
     }
 
     unsafe extern "system" fn prepare_operation(

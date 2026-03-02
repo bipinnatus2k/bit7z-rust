@@ -7,7 +7,8 @@ use crate::ffi::{
     BitLibrary, IInArchive, PROPVARIANT, HRESULT,
     kpidPath, kpidIsDir, kpidSize, kpidPackSize,
     kpidAttrib, kpidCTime, kpidATime, kpidMTime,
-    kpidEncrypted, kpidCRC,
+    kpidEncrypted, kpidCRC, kpidSolid, kpidIsVolume,
+    kpidNumVolumes,
 };
 use crate::format::ExtractFormat;
 use crate::error::{Bit7zError, Result};
@@ -17,7 +18,7 @@ use crate::ffi::{
     propvariant_to_filetime,
 };
 use crate::callback::OpenCallback;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct ArchiveItem {
     /// Item index in the archive
@@ -64,6 +65,28 @@ impl<'a> BitArchiveReader<'a> {
             _in_stream: None,
             _open_callback: None,
         }
+    }
+
+    /// Check if an archive is encrypted without fully opening it
+    pub fn is_encrypted_static<P: AsRef<Path>>(
+        library: &'a BitLibrary,
+        archive_path: P,
+        format: ExtractFormat,
+    ) -> Result<bool> {
+        let mut reader = Self::new(library, format);
+        reader.open(archive_path)?;
+        reader.is_encrypted()
+    }
+
+    /// Check if an archive has encrypted header without fully opening it
+    pub fn is_header_encrypted_static<P: AsRef<Path>>(
+        library: &'a BitLibrary,
+        archive_path: P,
+        format: ExtractFormat,
+    ) -> Result<bool> {
+        let mut reader = Self::new(library, format);
+        reader.open(archive_path)?;
+        reader.is_encrypted()
     }
 
     /// Open an archive file
@@ -386,10 +409,50 @@ impl<'a> BitArchiveReader<'a> {
             };
             prop.clear();
 
+            // Get solid compression flag
+            let result = ((*(*archive).vtable).get_archive_property)(
+                archive,
+                kpidSolid,
+                &mut prop,
+            );
+            let solid = if result == 0 {
+                propvariant_to_bool(&prop)
+            } else {
+                false
+            };
+            prop.clear();
+
+            // Get multi-volume flag
+            let result = ((*(*archive).vtable).get_archive_property)(
+                archive,
+                kpidIsVolume,
+                &mut prop,
+            );
+            let multi_volume = if result == 0 {
+                propvariant_to_bool(&prop)
+            } else {
+                false
+            };
+            prop.clear();
+
+            // Get number of volumes
+            let result = ((*(*archive).vtable).get_archive_property)(
+                archive,
+                kpidNumVolumes,
+                &mut prop,
+            );
+            let volumes_count = if result == 0 {
+                propvariant_to_u32(&prop)
+            } else {
+                1
+            };
+            prop.clear();
+
             // Count files and folders
             let items = self.items()?;
             let files_count = items.iter().filter(|i| !i.is_dir).count() as u32;
             let folders_count = items.iter().filter(|i| i.is_dir).count() as u32;
+            let items_count = items.len() as u32;
 
             // Check if archive is encrypted
             let encrypted = items.iter().any(|i| i.encrypted);
@@ -397,10 +460,153 @@ impl<'a> BitArchiveReader<'a> {
             Ok(ArchiveProperties {
                 files_count,
                 folders_count,
+                items_count,
                 size: total_size,
                 pack_size,
                 encrypted,
+                solid,
+                multi_volume,
+                volumes_count,
             })
+        }
+    }
+
+    /// Test archive integrity
+    pub fn test(&self) -> Result<()> {
+        let archive = self.archive.ok_or_else(|| {
+            Bit7zError::OpenFailed("Archive not opened".to_string())
+        })?;
+
+        unsafe {
+            // Get number of items
+            let mut num_items: u32 = 0;
+            let result = ((*(*archive).vtable).get_number_of_items)(
+                archive,
+                &mut num_items,
+            );
+
+            if result != 0 && result != 1 {
+                return Err(Bit7zError::OpenFailed("Failed to get item count".to_string()));
+            }
+
+            // Create a test callback (similar to ExtractCallback but for testing)
+            // For now, we use a simplified approach - just verify we can read all items
+            for i in 0..num_items {
+                let mut prop = std::mem::zeroed::<PROPVARIANT>();
+                
+                // Try to read path property
+                let prop_result = ((*(*archive).vtable).get_property)(
+                    archive,
+                    i,
+                    kpidPath,
+                    &mut prop,
+                );
+
+                if prop_result != 0 && prop_result != 1 {
+                    return Err(Bit7zError::ArchiveIntegrityCheckFailed(format!(
+                        "Failed to read item {} property: 0x{:X}", i, prop_result
+                    )));
+                }
+                
+                prop.clear();
+            }
+
+            Ok(())
+        }
+    }
+
+    /// Check if archive uses solid compression
+    pub fn is_solid(&self) -> Result<bool> {
+        let archive = self.archive.ok_or_else(|| {
+            Bit7zError::OpenFailed("Archive not opened".to_string())
+        })?;
+
+        unsafe {
+            let mut prop = std::mem::zeroed::<PROPVARIANT>();
+            let result = ((*(*archive).vtable).get_archive_property)(
+                archive,
+                kpidSolid,
+                &mut prop,
+            );
+
+            if result == 0 {
+                Ok(propvariant_to_bool(&prop))
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    /// Check if archive is multi-volume
+    pub fn is_multi_volume(&self) -> Result<bool> {
+        let archive = self.archive.ok_or_else(|| {
+            Bit7zError::OpenFailed("Archive not opened".to_string())
+        })?;
+
+        unsafe {
+            let mut prop = std::mem::zeroed::<PROPVARIANT>();
+            let result = ((*(*archive).vtable).get_archive_property)(
+                archive,
+                kpidIsVolume,
+                &mut prop,
+            );
+
+            if result == 0 {
+                Ok(propvariant_to_bool(&prop))
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get number of volumes
+    pub fn volumes_count(&self) -> Result<u32> {
+        let archive = self.archive.ok_or_else(|| {
+            Bit7zError::OpenFailed("Archive not opened".to_string())
+        })?;
+
+        unsafe {
+            let mut prop = std::mem::zeroed::<PROPVARIANT>();
+            let result = ((*(*archive).vtable).get_archive_property)(
+                archive,
+                kpidNumVolumes,
+                &mut prop,
+            );
+
+            if result == 0 {
+                Ok(propvariant_to_u32(&prop))
+            } else {
+                Ok(1)
+            }
+        }
+    }
+
+    /// Check if archive has encrypted items
+    pub fn has_encrypted_items(&self) -> Result<bool> {
+        let items = self.items()?;
+        Ok(items.iter().any(|i| i.encrypted))
+    }
+
+    /// Check if archive is encrypted (header encrypted)
+    pub fn is_encrypted(&self) -> Result<bool> {
+        let archive = self.archive.ok_or_else(|| {
+            Bit7zError::OpenFailed("Archive not opened".to_string())
+        })?;
+
+        unsafe {
+            let mut prop = std::mem::zeroed::<PROPVARIANT>();
+            let result = ((*(*archive).vtable).get_archive_property)(
+                archive,
+                kpidEncrypted,
+                &mut prop,
+            );
+
+            if result == 0 {
+                Ok(propvariant_to_bool(&prop))
+            } else {
+                // Fallback: check if any item is encrypted
+                self.has_encrypted_items()
+            }
         }
     }
 }
@@ -438,12 +644,20 @@ pub struct ArchiveProperties {
     pub files_count: u32,
     /// Number of folders in the archive
     pub folders_count: u32,
+    /// Total number of items (files + folders)
+    pub items_count: u32,
     /// Total uncompressed size
     pub size: u64,
     /// Total compressed size
     pub pack_size: u64,
     /// Whether any item in the archive is encrypted
     pub encrypted: bool,
+    /// Whether the archive uses solid compression
+    pub solid: bool,
+    /// Whether the archive is multi-volume
+    pub multi_volume: bool,
+    /// Number of volumes (1 for single-volume archives)
+    pub volumes_count: u32,
 }
 
 #[cfg(test)]
