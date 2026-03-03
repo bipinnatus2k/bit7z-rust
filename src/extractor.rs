@@ -9,6 +9,7 @@ use crate::ffi::{
     IArchiveOpenCallbackVTable, IUnknownVTable, ICryptoGetTextPasswordVTable,
     IArchiveOpenVolumeCallback, IArchiveOpenVolumeCallbackVTable,
     IArchiveOpenSetSubArchiveName, IArchiveOpenSetSubArchiveNameVTable,
+    ICompressProgressInfo, ICompressProgressInfoVTable,
 };
 use crate::format::ExtractFormat;
 use crate::error::{Bit7zError, Result};
@@ -731,9 +732,18 @@ impl<'a> BitExtractor<'a> {
 /// ExtractCallback implements IArchiveExtractCallback for extracting files
 ///
 /// Memory layout: vtable must be first to match C++ COM object layout
+/// 
+/// According to 7-Zip source code, ExtractCallback also implements:
+/// - ICompressProgressInfo (for progress reporting via SetRatioInfo)
+/// - ICryptoGetTextPassword (for password-protected archives)
+/// 
+/// We store additional vtables for these interfaces.
 #[repr(C)]
 struct ExtractCallback {
     vtable: Pin<Box<IArchiveExtractCallbackVTable>>,
+    // Additional vtables for supported interfaces
+    compress_progress_vtable: Pin<Box<ICompressProgressInfoVTable>>,
+    crypto_password_vtable: Pin<Box<ICryptoGetTextPasswordVTable>>,
     ref_count: UnsafeCell<u32>,
     output_dir: PathBuf,
     password: Option<String>,
@@ -761,8 +771,28 @@ impl ExtractCallback {
             set_operation_result: Self::set_operation_result,
         });
 
+        let compress_progress_vtable = Box::pin(ICompressProgressInfoVTable {
+            base: crate::ffi::IUnknownVTable {
+                query_interface: Self::query_interface,
+                add_ref: Self::add_ref,
+                release: Self::release,
+            },
+            set_ratio_info: Self::set_ratio_info,
+        });
+
+        let crypto_password_vtable = Box::pin(ICryptoGetTextPasswordVTable {
+            base: crate::ffi::IUnknownVTable {
+                query_interface: Self::query_interface,
+                add_ref: Self::add_ref,
+                release: Self::release,
+            },
+            crypto_get_text_password: Self::get_text_password,
+        });
+
         ExtractCallback {
             vtable,
+            compress_progress_vtable,
+            crypto_password_vtable,
             ref_count: UnsafeCell::new(1),
             output_dir: output_dir.to_path_buf(),
             password,
@@ -794,8 +824,28 @@ impl ExtractCallback {
             set_operation_result: Self::set_operation_result,
         });
 
+        let compress_progress_vtable = Box::pin(ICompressProgressInfoVTable {
+            base: crate::ffi::IUnknownVTable {
+                query_interface: Self::query_interface,
+                add_ref: Self::add_ref,
+                release: Self::release,
+            },
+            set_ratio_info: Self::set_ratio_info,
+        });
+
+        let crypto_password_vtable = Box::pin(ICryptoGetTextPasswordVTable {
+            base: crate::ffi::IUnknownVTable {
+                query_interface: Self::query_interface,
+                add_ref: Self::add_ref,
+                release: Self::release,
+            },
+            crypto_get_text_password: Self::get_text_password,
+        });
+
         ExtractCallback {
             vtable,
+            compress_progress_vtable,
+            crypto_password_vtable,
             ref_count: UnsafeCell::new(1),
             output_dir: PathBuf::new(),
             password,
@@ -824,7 +874,7 @@ impl ExtractCallback {
         }
 
         let callback = this as *mut ExtractCallback;
-        
+
         // IID_IUnknown
         let iid_iunknown = crate::ffi::IID_IUnknown;
         if *iid == iid_iunknown {
@@ -849,10 +899,23 @@ impl ExtractCallback {
             return 0; // S_OK
         }
 
+        // IID_ICompressProgressInfo (for progress reporting during extraction)
+        // According to 7-Zip source, ExtractCallback implements this interface
+        let iid_compress_progress = crate::ffi::IID_ICompressProgressInfo;
+        if *iid == iid_compress_progress {
+            // Return the compress_progress_vtable pointer
+            // Note: We return the vtable pointer, but the object pointer is still 'this'
+            // The caller will use this vtable to call SetRatioInfo
+            *out = &(*callback).compress_progress_vtable as *const _ as *mut c_void;
+            ExtractCallback::add_ref(this);
+            return 0; // S_OK
+        }
+
         // IID_ICryptoGetTextPassword (for password-protected archives)
         let iid_crypto = crate::ffi::IID_ICryptoGetTextPassword;
         if *iid == iid_crypto {
-            *out = callback as *mut c_void;
+            // Return the crypto_password_vtable pointer
+            *out = &(*callback).crypto_password_vtable as *const _ as *mut c_void;
             ExtractCallback::add_ref(this);
             return 0; // S_OK
         }
@@ -1047,5 +1110,43 @@ impl ExtractCallback {
             }
         }
         0
+    }
+
+    /// ICompressProgressInfo::SetRatioInfo - called during extraction to report progress
+    /// This is required by 7-Zip for some formats
+    unsafe extern "system" fn set_ratio_info(
+        _this: *mut ICompressProgressInfo,
+        _in_size: *const u64,
+        _out_size: *const u64,
+    ) -> HRESULT {
+        // Just ignore, this is optional progress reporting
+        0 // S_OK
+    }
+
+    /// ICryptoGetTextPassword::CryptoGetTextPassword - called for password-protected archives
+    unsafe extern "system" fn get_text_password(
+        this: *mut ICryptoGetTextPassword,
+        password: *mut *mut u16,
+    ) -> HRESULT {
+        if password.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
+        let callback = this as *mut ExtractCallback;
+
+        // Check if we have a password
+        if let Some(ref pwd) = (*callback).password {
+            // Convert password to UTF-16 BSTR
+            let pwd_utf16: Vec<u16> = pwd.encode_utf16().collect();
+            let bstr = crate::ffi::variant::alloc_bstr(&pwd_utf16);
+
+            if !bstr.is_null() {
+                *password = bstr;
+                return 0; // S_OK
+            }
+        }
+
+        // No password available
+        -2147467263 // E_NOTIMPL
     }
 }

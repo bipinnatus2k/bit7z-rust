@@ -161,10 +161,14 @@ impl OpenCallback {
         let callback = this as *mut OpenCallback;
         let ref_count = &(*callback).ref_count;
         let count = *ref_count.get();
-        if count > 0 {
+        if count > 1 {
             *ref_count.get() = count - 1;
             count - 1
         } else {
+            // Reference count reached 0, free the object
+            *ref_count.get() = 0;
+            // Drop the callback - this will also drop the Pin<Box<>> vtable
+            let _ = Box::from_raw(callback);
             0
         }
     }

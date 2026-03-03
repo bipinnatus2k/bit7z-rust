@@ -110,10 +110,14 @@ impl FileStream {
         let stream = this as *mut FileStream;
         let ref_count = &(*stream).ref_count;
         let count = *ref_count.get();
-        if count > 0 {
+        if count > 1 {
             *ref_count.get() = count - 1;
             count - 1
         } else {
+            // Reference count reached 0, free the object
+            *ref_count.get() = 0;
+            // Drop the stream - this will also drop the Pin<Box<>> vtable and close the file
+            let _ = Box::from_raw(stream);
             0
         }
     }
@@ -266,10 +270,14 @@ impl FileStreamWrite {
         let stream = this as *mut FileStreamWrite;
         let ref_count = &(*stream).ref_count;
         let count = *ref_count.get();
-        if count > 0 {
+        if count > 1 {
             *ref_count.get() = count - 1;
             count - 1
         } else {
+            // Reference count reached 0, free the object
+            *ref_count.get() = 0;
+            // Drop the stream - this will also drop the Pin<Box<>> vtable and close the file
+            let _ = Box::from_raw(stream);
             0
         }
     }
@@ -416,10 +424,14 @@ impl BufferInStream {
         let stream = this as *mut BufferInStream;
         let ref_count = &(*stream).ref_count;
         let count = *ref_count.get();
-        if count > 0 {
+        if count > 1 {
             *ref_count.get() = count - 1;
             count - 1
         } else {
+            // Reference count reached 0, free the object
+            *ref_count.get() = 0;
+            // Drop the stream - this will also drop the Pin<Box<>> vtable and the buffer
+            let _ = Box::from_raw(stream);
             0
         }
     }
@@ -563,10 +575,17 @@ impl BufferOutStream {
         let stream = this as *mut BufferOutStream;
         let ref_count = &(*stream).ref_count;
         let count = *ref_count.get();
-        if count > 0 {
+        if count > 1 {
             *ref_count.get() = count - 1;
             count - 1
         } else {
+            // Reference count reached 0, free the object
+            *ref_count.get() = 0;
+            // Free the leaked buffer first
+            let buffer_ptr = (*stream).buffer;
+            let _ = Box::from_raw(buffer_ptr);
+            // Drop the stream - this will also drop the Pin<Box<>> vtable
+            let _ = Box::from_raw(stream);
             0
         }
     }

@@ -467,8 +467,8 @@ pub fn alloc_bstr(s: &[u16]) -> *mut u16 {
         let str_ptr = ptr.add(4);
         std::ptr::copy_nonoverlapping(s.as_ptr(), str_ptr as *mut u16, s.len());
 
-        // Write null terminator
-        *(str_ptr.add(s.len()) as *mut u16) = 0;
+        // Write null terminator using write_unaligned for safety
+        std::ptr::write_unaligned(str_ptr.add(s.len()) as *mut u16, 0);
 
         // Return pointer to string data (after length prefix)
         str_ptr as *mut u16
