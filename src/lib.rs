@@ -40,9 +40,11 @@ pub mod mem_compressor;
 pub mod mem_extractor;
 pub mod stream_compressor;
 pub mod stream_extractor;
-
-#[cfg(feature = "vtable_impl")]
+pub mod vtable_base;
 pub mod vtable_callback;
+pub mod vtable_extract_callback;
+pub mod vtable_stream;
+pub mod vtable_update_callback;
 
 pub use ffi::BitLibrary;
 pub use ffi::LibraryError;

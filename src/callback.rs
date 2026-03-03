@@ -1,5 +1,9 @@
 //! Common callback implementations for 7-Zip operations
 //!
+//! This module provides both manual and vtable-crate-based implementations:
+//! - `OpenCallback` - Manual vtable implementation (legacy)
+//! - `VTableOpenCallback` - VTable crate implementation (recommended, in vtable_callback.rs)
+//!
 //! OpenCallback implements multiple interfaces:
 //! - IArchiveOpenCallback
 //! - IArchiveOpenVolumeCallback
@@ -22,6 +26,9 @@ use std::ptr;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+// Re-export VTableOpenCallback from vtable_callback module
+pub use crate::vtable_callback::VTableOpenCallback;
+
 /// Total callback type - called with total size
 pub type TotalCallback = Arc<Mutex<dyn FnMut(u64) + Send + Sync>>;
 
@@ -37,7 +44,11 @@ pub type FileCallback = Arc<Mutex<dyn FnMut(String) + Send + Sync>>;
 /// Password callback type - returns password string
 pub type PasswordCallback = Arc<Mutex<dyn FnMut() -> String + Send + Sync>>;
 
-/// Open callback for 7-Zip archive opening
+/// Open callback for 7-Zip archive opening (Manual vtable implementation)
+/// 
+/// **Note**: This is the legacy manual implementation. 
+/// For new code, consider using `VTableOpenCallback` from the `vtable_callback` module.
+///
 /// Memory layout: vtable must be first to match C++ COM object layout
 #[repr(C)]
 pub struct OpenCallback {
