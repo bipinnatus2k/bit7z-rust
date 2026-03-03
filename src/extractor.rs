@@ -3,12 +3,9 @@
 //! This module provides BitExtractor for extracting files from archives.
 
 use crate::ffi::{
-    BitLibrary, IInArchive, IArchiveExtractCallback, IArchiveOpenCallback,
-    ISequentialOutStream, ICryptoGetTextPassword, IInStream,
-    PROPVARIANT, HRESULT, IArchiveExtractCallbackVTable, IInArchiveVTable,
-    IArchiveOpenCallbackVTable, IUnknownVTable, ICryptoGetTextPasswordVTable,
-    IArchiveOpenVolumeCallback, IArchiveOpenVolumeCallbackVTable,
-    IArchiveOpenSetSubArchiveName, IArchiveOpenSetSubArchiveNameVTable,
+    BitLibrary, IInArchive, IArchiveExtractCallback,
+    ISequentialOutStream, ICryptoGetTextPassword,
+    PROPVARIANT, HRESULT, IArchiveExtractCallbackVTable, ICryptoGetTextPasswordVTable,
     ICompressProgressInfo, ICompressProgressInfoVTable,
 };
 use crate::format::ExtractFormat;
@@ -21,7 +18,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::ptr;
-use std::ffi::c_uint;
 
 /// Extractor for extracting files from archives
 pub struct BitExtractor<'a> {
@@ -134,7 +130,7 @@ impl<'a> BitExtractor<'a> {
         writer: &mut W,
         index: u32,
     ) -> Result<()> {
-        use std::io::Write;
+        
         
         // Extract to temporary directory first, then copy to stream
         let temp_dir = std::env::temp_dir().join(format!(
@@ -269,7 +265,7 @@ impl<'a> BitExtractor<'a> {
         pattern: &str,
         output_dir: P,
     ) -> Result<()> {
-        use crate::archive_reader::{BitArchiveReader, ArchiveItem};
+        use crate::archive_reader::BitArchiveReader;
         
         // Open archive to get items
         let mut reader = BitArchiveReader::new(self.library, self.format);
@@ -307,7 +303,7 @@ impl<'a> BitExtractor<'a> {
         pattern: &str,
         output_dir: P,
     ) -> Result<()> {
-        use crate::archive_reader::{BitArchiveReader, ArchiveItem};
+        use crate::archive_reader::BitArchiveReader;
         
         // Compile regex
         let regex = regex::Regex::new(pattern)
@@ -419,7 +415,7 @@ impl<'a> BitExtractor<'a> {
 
             // Call Extract with kExtractMode::Test (2)
             // This tests the archive without actually extracting files
-            let extract_mode: i32 = 2; // kExtractMode::Test
+            let _extract_mode: i32 = 2; // kExtractMode::Test
             let mut indices: [i32; 1] = [-1]; // -1 means all items
             let indices_ptr = indices.as_mut_ptr() as *mut u32;
 
@@ -477,7 +473,7 @@ impl<'a> BitExtractor<'a> {
 
             // Get number of items
             let mut num_items: u32 = 0;
-            let get_num_result = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
+            let _get_num_result = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
                 archive_ptr.as_ptr(),
                 &mut num_items,
             );

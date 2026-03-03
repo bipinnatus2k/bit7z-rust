@@ -3,12 +3,12 @@
 //! This module provides BitOutputArchive for managing archive creation operations.
 
 use crate::ffi::{
-    IOutArchive, ISequentialOutStream, IInArchive,
+    IOutArchive, ISequentialOutStream,
 };
 use crate::format::CompressionFormat;
 use crate::error::{Bit7zError, Result};
 use crate::stream::FileStreamWrite;
-use crate::compress_callback::{InputItem, ExtendedInputItem, InputItemType};
+use crate::compress_callback::InputItem;
 use crate::archive_reader::ArchiveItem;
 use std::path::{Path, PathBuf};
 use std::collections::HashSet;
@@ -469,7 +469,7 @@ impl<'a> BitOutputArchive<'a> {
 
     /// Compress to a memory buffer
     pub fn compress_to_buffer(&self) -> Result<Vec<u8>> {
-        use std::io::Write;
+        
         
         // Create a temporary file for output
         let temp_path = std::env::temp_dir().join(format!(
@@ -500,7 +500,7 @@ impl<'a> BitOutputArchive<'a> {
 
     /// Compress to a writer stream
     pub fn compress_to_stream<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
-        use std::io::Write;
+        
         
         // Create a temporary file for output
         let temp_path = std::env::temp_dir().join(format!(
@@ -538,10 +538,10 @@ impl<'a> BitOutputArchive<'a> {
         input_items: &[InputItem],
         out_stream: &FileStreamWrite,
     ) -> Result<()> {
-        use crate::ffi::{BitLibrary, IOutArchive, ISetProperties, IUnknown, PROPVARIANT, VARENUM};
-        use crate::ffi::variant::{alloc_bstr_from_utf32, free_bstr};
+        use crate::ffi::BitLibrary;
+        
         use crate::compress_callback::UpdateCallback;
-        use std::ptr;
+        
 
         // Load 7-Zip library
         let lib = match BitLibrary::new(None::<&str>) {

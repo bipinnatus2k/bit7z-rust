@@ -221,7 +221,7 @@ impl OpenCallback {
 
             // On Linux, 7-Zip uses UTF-32 (wchar_t is 4 bytes)
             // Convert to UTF-32
-            let utf32: Vec<u32> = file_name.chars().map(|c| c as u32).collect();
+            let _utf32: Vec<u32> = file_name.chars().map(|c| c as u32).collect();
 
             // Allocate BSTR (UTF-16 version for cross-platform compatibility)
             let bstr = alloc_bstr_from_utf32(&file_name);

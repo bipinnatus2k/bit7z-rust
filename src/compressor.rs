@@ -3,15 +3,12 @@
 //! This module provides BitCompressor for compressing files into archives.
 
 use crate::ffi::{
-    BitLibrary, IOutArchive, IOutStream, ISetProperties, IUnknown,
-    PROPVARIANT, PROPID, HRESULT,
-    IID_ISetProperties,
+    BitLibrary, IOutArchive, IUnknown,
 };
 use crate::format::{CompressionFormat, CompressionLevel, CompressionMethod};
 use crate::error::{Bit7zError, Result};
 use crate::stream::FileStreamWrite;
 use crate::compress_callback::{UpdateCallback, InputItem, TotalCallbackType, ProgressCallback as CompressProgressCallback, RatioCallback as CompressRatioCallback, FileCallback as CompressFileCallback, PasswordCallback as CompressPasswordCallback};
-use crate::callback::{TotalCallback, ProgressCallback, RatioCallback, FileCallback, PasswordCallback};
 use std::path::Path;
 use std::ptr;
 use std::sync::{Arc, Mutex};
@@ -364,7 +361,7 @@ impl<'a> BitCompressor<'a> {
             .collect();
 
         // Create a temporary file for output
-        use std::io::Write;
+        
         let temp_path = std::env::temp_dir().join(format!(
             "bit7z_temp_{}.tmp",
             std::process::id()

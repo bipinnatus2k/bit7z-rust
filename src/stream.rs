@@ -149,7 +149,7 @@ impl FileStream {
                     0 // S_OK
                 }
             }
-            Err(e) => {
+            Err(_e) => {
                 if !processed_size.is_null() {
                     write_unaligned(processed_size, 0);
                 }
@@ -323,7 +323,7 @@ impl FileStreamWrite {
         new_position: *mut u64,
     ) -> crate::ffi::HRESULT {
         let stream = this as *mut FileStreamWrite;
-        let mut file = &mut (*stream).file;
+        let file = &mut (*stream).file;
 
         let from = match seek_origin {
             SEEK_SET => SeekFrom::Start(offset as u64),

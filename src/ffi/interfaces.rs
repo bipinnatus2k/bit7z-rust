@@ -2,7 +2,7 @@
 //! 
 //! This module provides low-level COM interface vtable definitions.
 
-use crate::ffi::{GUID, HRESULT, ULONG, ULONGLONG, PROPVARIANT, PROPID};
+use crate::ffi::{GUID, HRESULT, ULONG, PROPVARIANT, PROPID};
 use std::ffi::c_void;
 
 // IUnknown - base COM interface

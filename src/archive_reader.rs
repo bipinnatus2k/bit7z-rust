@@ -4,7 +4,7 @@
 //! without extracting them.
 
 use crate::ffi::{
-    BitLibrary, IInArchive, PROPVARIANT, HRESULT,
+    BitLibrary, IInArchive, PROPVARIANT,
     kpidPath, kpidIsDir, kpidSize, kpidPackSize,
     kpidAttrib, kpidCTime, kpidATime, kpidMTime,
     kpidEncrypted, kpidCRC, kpidSolid, kpidIsVolume,
@@ -18,7 +18,7 @@ use crate::ffi::{
     propvariant_to_filetime,
 };
 use crate::callback::OpenCallback;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 #[derive(Debug, Clone)]
 pub struct ArchiveItem {
     /// Item index in the archive
@@ -127,7 +127,7 @@ impl<'a> BitArchiveReader<'a> {
 
             // Check number of items after opening
             let mut num_items: u32 = 0;
-            let count_result = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
+            let _count_result = ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
                 archive_ptr.as_ptr(),
                 &mut num_items,
             );

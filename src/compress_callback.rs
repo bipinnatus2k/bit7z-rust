@@ -28,7 +28,6 @@ use crate::ffi::{
     IID_IArchiveUpdateCallback2, IID_ICompressProgressInfo,
 };
 use crate::ffi::variant::alloc_bstr_from_utf32;
-use crate::error::Result;
 use crate::stream::FileStream;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;

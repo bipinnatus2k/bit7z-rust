@@ -3,7 +3,6 @@
 //! This module demonstrates using the vtable crate to simplify
 //! COM interface implementation for 7-Zip callbacks.
 
-use vtable::*;
 use crate::vtable_base::*;
 use crate::ffi::{
     GUID, HRESULT, PROPVARIANT, IInStream,

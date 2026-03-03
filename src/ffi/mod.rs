@@ -21,7 +21,6 @@ pub use interfaces::IArchiveUpdateCallbackVTable;
 pub use interfaces::ICryptoGetTextPasswordVTable;
 pub use interfaces::IProgressVTable;
 
-use std::ffi::c_void;
 
 pub type HRESULT = i32;
 pub type ULONG = u32;

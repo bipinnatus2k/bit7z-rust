@@ -6,7 +6,7 @@
 use crate::ffi::BitLibrary;
 use crate::format::CompressionFormat;
 use crate::error::{Bit7zError, Result};
-use crate::archive_reader::{BitArchiveReader, ArchiveItem};
+use crate::archive_reader::BitArchiveReader;
 use crate::compress_callback::InputItem;
 use crate::output_archive::BitOutputArchive;
 use std::path::{Path, PathBuf};

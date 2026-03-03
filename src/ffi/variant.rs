@@ -3,8 +3,7 @@
 //! This module defines PROPVARIANT union type for passing properties
 //! to and from 7-Zip interfaces.
 
-use std::ffi::c_void;
-use crate::error::{Bit7zError, Result};
+use crate::error::Result;
 
 /// Variant type enumeration
 #[repr(u16)]

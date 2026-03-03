@@ -3,7 +3,7 @@
 //! This module handles loading 7-Zip shared library and creating archive objects.
 
 use crate::ffi::{
-    GUID, HRESULT, IInArchive, IOutArchive, IUnknown,
+    GUID, HRESULT, IInArchive, IOutArchive,
     IID_IInArchive, IID_IOutArchive,
 };
 use libloading::{Library, Symbol};

@@ -7,7 +7,7 @@ use crate::ffi::BitLibrary;
 use crate::format::ExtractFormat;
 use crate::error::{Bit7zError, Result};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use tempfile::{NamedTempFile, TempDir};
 
 /// Stream extractor for extracting data to output streams

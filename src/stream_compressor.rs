@@ -5,7 +5,7 @@
 use crate::compressor::BitCompressor;
 use crate::ffi::BitLibrary;
 use crate::format::CompressionFormat;
-use crate::error::{Bit7zError, Result};
+use crate::error::Result;
 use std::fs;
 use std::io::{Read, Write};
 use tempfile::NamedTempFile;
