@@ -1,11 +1,10 @@
 //! 示例程序：演示 BitArchiveEditor 的使用方法
 
-use bit7z_rust::{BitLibrary, BitArchiveEditor, CompressionFormat, DeletePolicy};
-use std::path::Path;
+use bit7z_rust::BitLibrary;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 加载 7-Zip 库
-    let lib = BitLibrary::new(None)?;
+    let lib = BitLibrary::new::<String>(None)?;
     
     // 创建一个示例档案编辑器（注意：这需要一个实际存在的档案）
     // 这里仅演示 API 的使用方式

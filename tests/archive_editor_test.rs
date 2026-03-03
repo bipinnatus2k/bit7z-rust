@@ -7,7 +7,7 @@ use std::path::Path;
 #[test]
 fn test_archive_editor_creation() {
     // Test that we can create an archive editor
-    let lib = BitLibrary::new(None).unwrap();
+    let lib = BitLibrary::new::<String>(None).unwrap();
     
     // Create a simple test archive first
     let test_archive = "test_archive.7z";
