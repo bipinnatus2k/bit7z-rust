@@ -3,7 +3,7 @@
 //! This module provides BitOutputArchive for managing archive creation operations.
 
 use crate::ffi::{
-    IOutArchive, ISequentialOutStream,
+    IOutArchive, ISequentialOutStream, IArchiveUpdateCallback,
 };
 use crate::format::CompressionFormat;
 use crate::error::{Bit7zError, Result};
@@ -539,9 +539,9 @@ impl<'a> BitOutputArchive<'a> {
         out_stream: &FileStreamWrite,
     ) -> Result<()> {
         use crate::ffi::BitLibrary;
-        
+
         use crate::compress_callback::UpdateCallback;
-        
+
 
         // Load 7-Zip library
         let lib = match BitLibrary::new(None::<&str>) {
@@ -560,13 +560,19 @@ impl<'a> BitOutputArchive<'a> {
             let archive = archive_ptr.as_ptr();
 
             // Set archive properties
+            eprintln!("[output_archive] Setting archive properties");
             self.set_archive_properties(archive)?;
+            eprintln!("[output_archive] Archive properties set");
 
-            // Create update callback
+            // Create update callback on the heap
+            // We need to use Box::new and Box::into_raw because the COM interface
+            // uses reference counting and may call release after update_items returns
             let update_callback = UpdateCallback::new(
                 input_items.to_vec(),
                 self.password.clone(),
             );
+            let callback_box = Box::new(update_callback);
+            let callback_ptr = Box::into_raw(callback_box);
 
             // Call UpdateItems
             let num_items = input_items.len() as u32;
@@ -575,8 +581,12 @@ impl<'a> BitOutputArchive<'a> {
                 archive,
                 out_stream.as_i_out_stream() as *mut ISequentialOutStream,
                 num_items,
-                update_callback.as_i_archive_update_callback(),
+                callback_ptr as *mut IArchiveUpdateCallback,
             );
+
+            // After update_items returns, release our reference
+            // The callback will be freed when ref_count reaches 0
+            UpdateCallback::release_caller_reference(callback_ptr);
 
             // S_OK (0) and S_FALSE (1) are both success codes
             if result != 0 && result != 1 {
@@ -595,17 +605,21 @@ impl<'a> BitOutputArchive<'a> {
         use crate::ffi::variant::{alloc_bstr_from_utf32, free_bstr};
         use std::ptr;
 
+        eprintln!("[set_archive_properties] Starting");
+
         // Try to get ISetProperties interface
         let mut set_props_ptr: *mut std::ffi::c_void = ptr::null_mut();
         let iid = IID_ISetProperties;
 
         let unknown = archive as *mut IUnknown;
         let archive_vtable = &*(*archive).vtable;
+        eprintln!("[set_archive_properties] Calling QueryInterface");
         let result = (archive_vtable.base.query_interface)(
             unknown,
             &iid,
             &mut set_props_ptr,
         );
+        eprintln!("[set_archive_properties] QueryInterface result: 0x{:X}, ptr: {:p}", result, set_props_ptr);
 
         if result != 0 || set_props_ptr.is_null() {
             // ISetProperties not supported, skip property setting

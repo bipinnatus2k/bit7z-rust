@@ -55,39 +55,50 @@ impl<'a> BitExtractor<'a> {
         index: u32,
     ) -> Result<Vec<u8>> {
         use crate::stream::BufferOutStream;
-        
+
         unsafe {
             let archive_ptr = self.library.create_in_archive(&self.format.guid())?;
 
-            let in_stream = Box::leak(Box::new(
-                crate::stream::FileStream::new(archive_path.as_ref())?
-            ));
+            // Create input stream for archive file
+            let in_stream = crate::stream::FileStream::new(archive_path.as_ref())?;
+            let in_stream_box = Box::new(in_stream);
+            let in_stream_ptr = Box::into_raw(in_stream_box);
+
+            // Create open callback
+            let open_callback = OpenCallback::new(archive_path.as_ref());
+            let open_callback_box = Box::new(open_callback);
+            let open_callback_ptr = Box::into_raw(open_callback_box);
 
             let max_check_start_position: u64 = 0;
-            let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
-
             let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
-                in_stream.as_i_in_stream(),
+                (*in_stream_ptr).as_i_in_stream(),
                 &max_check_start_position,
-                open_callback.as_i_archive_open_callback(),
+                (*open_callback_ptr).as_i_archive_open_callback(),
             );
 
             if open_result != 0 && open_result != 1 {
+                // Clean up on failure
+                let _ = Box::from_raw(in_stream_ptr);
+                let _ = Box::from_raw(open_callback_ptr);
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", open_result
                 )));
             }
 
             // Create buffer output stream
-            let buffer_stream = Box::leak(Box::new(BufferOutStream::new()));
+            let buffer_stream = BufferOutStream::new();
+            let buffer_stream_box = Box::new(buffer_stream);
+            let buffer_stream_ptr = Box::into_raw(buffer_stream_box);
 
             // Create extract callback for buffer extraction
-            let callback = Box::leak(Box::new(ExtractCallback::with_buffer(
-                buffer_stream,
+            let callback = ExtractCallback::with_buffer(
+                buffer_stream_ptr,
                 self.password.clone(),
                 archive_ptr.as_ptr(),
-            )));
+            );
+            let callback_box = Box::new(callback);
+            let callback_ptr = Box::into_raw(callback_box);
 
             // Extract specific item by index
             let mut indices = [index];
@@ -98,18 +109,30 @@ impl<'a> BitExtractor<'a> {
                 indices_ptr,
                 1, // number of indices
                 0, // extract mode: 0 = extract
-                callback as *mut ExtractCallback as *mut IArchiveExtractCallback,
+                callback_ptr as *mut IArchiveExtractCallback,
             );
 
+            // After extract returns, release our reference
+            // The callback will be freed when ref_count reaches 0
+            ExtractCallback::release_caller_reference(callback_ptr);
+
             if result != 0 && result != 1 {
+                // Clean up on failure
+                let _ = Box::from_raw(in_stream_ptr);
+                let _ = Box::from_raw(open_callback_ptr);
                 return Err(Bit7zError::ExtractFailed(format!(
                     "Extract failed with HRESULT: 0x{:X}", result
                 )));
             }
 
             // Get buffer content
-            let buffer = buffer_stream.get_buffer();
-            
+            let buffer = (*buffer_stream_ptr).get_buffer();
+
+            // Clean up
+            let _ = Box::from_raw(in_stream_ptr);
+            let _ = Box::from_raw(open_callback_ptr);
+            // buffer_stream is owned by callback, which will free it
+
             Ok(buffer)
         }
     }
@@ -856,6 +879,25 @@ impl ExtractCallback {
         self as *const ExtractCallback as *mut ExtractCallback as *mut IArchiveExtractCallback
     }
 
+    /// Release the caller's reference to the callback.
+    /// This should be called after extract returns to decrement the ref count.
+    /// If this was the last reference, the callback will be freed.
+    /// 
+    /// # Safety
+    /// This takes ownership of the callback and may free it.
+    pub unsafe fn release_caller_reference(callback_ptr: *mut ExtractCallback) {
+        let ref_count = &(*callback_ptr).ref_count;
+        let count = *ref_count.get();
+        if count > 1 {
+            // 7-Zip is still holding a reference, decrement and let release free it
+            *ref_count.get() = count - 1;
+        } else {
+            // 7-Zip didn't add a reference, we need to free it
+            *ref_count.get() = 0;
+            let _ = Box::from_raw(callback_ptr);
+        }
+    }
+
     fn as_i_crypto_get_text_password(&self) -> *mut ICryptoGetTextPassword {
         self as *const ExtractCallback as *mut ExtractCallback as *mut ICryptoGetTextPassword
     }
@@ -932,10 +974,13 @@ impl ExtractCallback {
         let callback = this as *mut ExtractCallback;
         let ref_count = &(*callback).ref_count;
         let count = *ref_count.get();
-        if count > 0 {
+        if count > 1 {
             *ref_count.get() = count - 1;
             count - 1
         } else {
+            *ref_count.get() = 0;
+            // Free the callback
+            let _ = Box::from_raw(callback);
             0
         }
     }

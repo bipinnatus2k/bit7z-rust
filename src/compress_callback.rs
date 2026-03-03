@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::io::Write;
 
 /// Input item representing a file to be compressed
 #[derive(Clone)]
@@ -373,6 +374,25 @@ impl UpdateCallback {
         self as *const UpdateCallback as *mut UpdateCallback as *mut IArchiveUpdateCallback
     }
 
+    /// Release the caller's reference to the callback.
+    /// This should be called after update_items returns to decrement the ref count.
+    /// If this was the last reference, the callback will be freed.
+    /// 
+    /// # Safety
+    /// This takes ownership of the callback and may free it.
+    pub unsafe fn release_caller_reference(callback_ptr: *mut UpdateCallback) {
+        let ref_count = &(*callback_ptr).ref_count;
+        let count = *ref_count.get();
+        if count > 1 {
+            // 7-Zip is still holding a reference, decrement and let release free it
+            *ref_count.get() = count - 1;
+        } else {
+            // 7-Zip didn't add a reference, we need to free it
+            *ref_count.get() = 0;
+            let _ = Box::from_raw(callback_ptr);
+        }
+    }
+
     // Helper to get self from IUnknown pointer
     unsafe fn from_unknown(this: *mut IUnknown) -> *mut UpdateCallback {
         // For IUnknown, the vtable is at offset 0, same as UpdateCallback
@@ -453,6 +473,9 @@ impl UpdateCallback {
         iid: *const crate::ffi::GUID,
         out: *mut *mut c_void,
     ) -> HRESULT {
+        eprintln!("[QueryInterface] Enter, this={:p}", this);
+        let _ = std::io::stderr().flush();
+        
         if out.is_null() || iid.is_null() {
             return -2147467261; // E_POINTER
         }
@@ -468,38 +491,48 @@ impl UpdateCallback {
         let iid_crypto = IID_ICryptoGetTextPassword;
         let iid_crypto2 = IID_ICryptoGetTextPassword2;
 
+        eprintln!("[QueryInterface] Checking IIDs");
+        let _ = std::io::stderr().flush();
+        
         if *iid == iid_iunknown {
+            eprintln!("[QueryInterface] IUnknown");
             *out = callback as *mut c_void;
         } else if *iid == iid_progress {
+            eprintln!("[QueryInterface] IProgress");
             let progress_ptr = (callback as *mut u8).add(std::mem::size_of::<*const IUnknownVTable>()) as *mut IProgress;
             *out = progress_ptr as *mut c_void;
         } else if *iid == iid_update_callback {
+            eprintln!("[QueryInterface] IArchiveUpdateCallback");
             let update_ptr = (callback as *mut u8)
-                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                .add(std::mem::size_of::<*const IUnknownVTable>()
                    + std::mem::size_of::<*const IProgressVTable>()) as *mut IArchiveUpdateCallback;
             *out = update_ptr as *mut c_void;
         } else if *iid == iid_update_callback2 {
+            eprintln!("[QueryInterface] IArchiveUpdateCallback2");
             let update2_ptr = (callback as *mut u8)
-                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                .add(std::mem::size_of::<*const IUnknownVTable>()
                    + std::mem::size_of::<*const IProgressVTable>()
                    + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()) as *mut IArchiveUpdateCallback2;
             *out = update2_ptr as *mut c_void;
         } else if *iid == iid_compress_progress {
+            eprintln!("[QueryInterface] ICompressProgressInfo");
             let progress_ptr = (callback as *mut u8)
-                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                .add(std::mem::size_of::<*const IUnknownVTable>()
                    + std::mem::size_of::<*const IProgressVTable>()
                    + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()
                    + std::mem::size_of::<*const IArchiveUpdateCallback2VTable>()) as *mut ICompressProgressInfo;
             *out = progress_ptr as *mut c_void;
         } else if *iid == iid_crypto {
+            eprintln!("[QueryInterface] ICryptoGetTextPassword");
             let crypto_ptr = (callback as *mut u8)
-                .add(std::mem::size_of::<*const IUnknownVTable>() 
+                .add(std::mem::size_of::<*const IUnknownVTable>()
                    + std::mem::size_of::<*const IProgressVTable>()
                    + std::mem::size_of::<*const IArchiveUpdateCallbackVTable>()
                    + std::mem::size_of::<*const IArchiveUpdateCallback2VTable>()
                    + std::mem::size_of::<*const ICompressProgressInfoVTable>()) as *mut ICryptoGetTextPassword;
             *out = crypto_ptr as *mut c_void;
         } else if *iid == iid_crypto2 {
+            eprintln!("[QueryInterface] ICryptoGetTextPassword2");
             let crypto2_ptr = (callback as *mut u8)
                 .add(std::mem::size_of::<*const IUnknownVTable>() 
                    + std::mem::size_of::<*const IProgressVTable>()
@@ -808,6 +841,9 @@ impl UpdateCallback {
         index: u32,
         in_stream: *mut *mut ISequentialInStream,
     ) -> HRESULT {
+        eprintln!("[GetStream] Enter, index={}, this={:p}", index, this);
+        let _ = std::io::stderr().flush();
+        
         if in_stream.is_null() {
             return -2147467261; // E_POINTER
         }
@@ -818,13 +854,19 @@ impl UpdateCallback {
         // Note: finalize is a no-op in our implementation since streams auto-close on drop
 
         let items = &(*callback).input_items;
+        eprintln!("[GetStream] items.len()={}", items.len());
+        let _ = std::io::stderr().flush();
 
         if index as usize >= items.len() {
+            eprintln!("[GetStream] Index out of range");
+            let _ = std::io::stderr().flush();
             *in_stream = ptr::null_mut();
             return -2147467259; // E_FAIL
         }
 
         let item = &items[index as usize];
+        eprintln!("[GetStream] item.path={:?}", item.path);
+        let _ = std::io::stderr().flush();
 
         // Call file callback if registered (matching bit7z behavior)
         if let Some(ref file_cb) = (*callback).file_callback {
@@ -836,20 +878,29 @@ impl UpdateCallback {
 
         // Directories don't need a stream
         if item.path.is_dir() {
+            eprintln!("[GetStream] Directory, returning null stream");
+            let _ = std::io::stderr().flush();
             *in_stream = ptr::null_mut();
             return 0; // S_OK
         }
 
         // Create a file stream for the input file
+        eprintln!("[GetStream] Creating FileStream");
+        let _ = std::io::stderr().flush();
         match FileStream::new(&item.path) {
             Ok(file_stream) => {
+                eprintln!("[GetStream] FileStream created");
+                let _ = std::io::stderr().flush();
                 let pinned_stream = Box::new(file_stream);
                 let stream_ptr = Box::into_raw(pinned_stream);
                 *in_stream = (*stream_ptr).as_i_in_stream() as *mut ISequentialInStream;
+                eprintln!("[GetStream] Returning stream={:p}", *in_stream);
+                let _ = std::io::stderr().flush();
                 0 // S_OK
             }
             Err(e) => {
                 eprintln!("[Callback] GetStream: failed to create stream: {}", e);
+                let _ = std::io::stderr().flush();
                 *in_stream = ptr::null_mut();
                 -2147467259 // E_FAIL
             }

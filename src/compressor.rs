@@ -12,6 +12,7 @@ use crate::compress_callback::{UpdateCallback, InputItem, TotalCallbackType, Pro
 use std::path::Path;
 use std::ptr;
 use std::sync::{Arc, Mutex};
+use std::io::Write;
 
 /// Compressor for creating archives
 pub struct BitCompressor<'a> {
@@ -319,6 +320,8 @@ impl<'a> BitCompressor<'a> {
         input_paths: &[P],
         output_path: O,
     ) -> Result<()> {
+        eprintln!("[compress] Enter, format={:?}", self.format);
+        let _ = std::io::stderr().flush();
         // Check if format supports multiple files
         if input_paths.len() > 1 && !self.format.info().features.multiple_files {
             return Err(Bit7zError::FeatureNotSupported(
@@ -327,17 +330,27 @@ impl<'a> BitCompressor<'a> {
         }
 
         // Build input items
+        eprintln!("[compress] Building {} input items", input_paths.len());
+        let _ = std::io::stderr().flush();
         let input_items: Vec<InputItem> = input_paths
             .iter()
             .map(|p| InputItem::new(p.as_ref()))
             .collect();
 
         // Create output file stream
+        eprintln!("[compress] Creating output stream: {:?}", output_path.as_ref());
+        let _ = std::io::stderr().flush();
         let out_stream = FileStreamWrite::new(output_path.as_ref())
             .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+        eprintln!("[compress] Output stream created");
+        let _ = std::io::stderr().flush();
 
         // Perform compression
+        eprintln!("[compress] Calling compress_internal");
+        let _ = std::io::stderr().flush();
         self.compress_internal(&input_items, &out_stream)?;
+        eprintln!("[compress] Done");
+        let _ = std::io::stderr().flush();
 
         Ok(())
     }
@@ -488,6 +501,9 @@ impl<'a> BitCompressor<'a> {
         input_items: &[InputItem],
         out_stream: &FileStreamWrite,
     ) -> Result<()> {
+        use crate::compress_callback::UpdateCallback;
+        use crate::ffi::IArchiveUpdateCallback;
+
         unsafe {
             // Create output archive object
             let format_guid = self.format.info().guid;
@@ -497,9 +513,17 @@ impl<'a> BitCompressor<'a> {
             let archive = archive_ptr.as_ptr();
 
             // Set archive properties (compression level, method, etc.)
-            self.set_archive_properties(archive)?;
+            // DISABLED: p7zip may not support custom properties
+            // eprintln!("[compress_internal] Calling set_archive_properties");
+            // let _ = std::io::stderr().flush();
+            // self.set_archive_properties(archive)?;
+            // eprintln!("[compress_internal] set_archive_properties done");
+            // let _ = std::io::stderr().flush();
 
-            // Create update callback with callbacks
+            // Create update callback on the heap
+            // We need to use Box::new and Box::into_raw because the COM interface
+            // uses reference counting and may call release after update_items returns
+            eprintln!("[DEBUG] Creating UpdateCallback with {} items", input_items.len());
             let update_callback = UpdateCallback::with_callbacks(
                 input_items.to_vec(),
                 self.password.clone(),
@@ -509,16 +533,32 @@ impl<'a> BitCompressor<'a> {
                 self.file_callback.clone(),
                 self.password_callback.clone(),
             );
+            let callback_box = Box::new(update_callback);
+            let callback_ptr = Box::into_raw(callback_box);
+            eprintln!("[DEBUG] UpdateCallback created at {:p}", callback_ptr);
 
             // Call UpdateItems
             let num_items = input_items.len() as u32;
+            eprintln!("[DEBUG] Calling UpdateItems with {} items", num_items);
+            let _ = std::io::stderr().flush();
             let archive_vtable = &*(*archive).vtable;
+            eprintln!("[DEBUG] archive_vtable={:p}, update_items_fn={:p}", 
+                archive_vtable, archive_vtable.update_items);
+            let _ = std::io::stderr().flush();
             let result = (archive_vtable.update_items)(
                 archive,
                 out_stream.as_i_out_stream() as *mut crate::ffi::ISequentialOutStream,
                 num_items,
-                update_callback.as_i_archive_update_callback(),
+                callback_ptr as *mut IArchiveUpdateCallback,
             );
+            eprintln!("[DEBUG] UpdateItems returned 0x{:X}", result);
+            let _ = std::io::stderr().flush();
+
+            // After update_items returns, release our reference
+            // The callback will be freed when ref_count reaches 0
+            eprintln!("[DEBUG] Releasing caller reference");
+            UpdateCallback::release_caller_reference(callback_ptr);
+            eprintln!("[DEBUG] Done");
 
             // S_OK (0) and S_FALSE (1) are both success codes
             if result != 0 && result != 1 {
@@ -663,6 +703,7 @@ impl<'a> BitCompressor<'a> {
             let values_ptr = prop_values.as_ptr();
             let num_props = prop_names.len() as u32;
 
+            eprintln!("[DEBUG] Calling SetProperties with {} props", num_props);
             let set_result = unsafe {
                 (set_vtable.set_properties)(
                     set_properties,
@@ -671,13 +712,21 @@ impl<'a> BitCompressor<'a> {
                     num_props,
                 )
             };
+            eprintln!("[DEBUG] SetProperties returned 0x{:X}", set_result);
+            let _ = std::io::stderr().flush();
 
             if set_result != 0 && set_result != 1 {
                 eprintln!("[WARN] SetProperties returned 0x{:X}", set_result);
+                let _ = std::io::stderr().flush();
                 // Don't fail - some formats may not support all properties
             }
+        } else {
+            eprintln!("[DEBUG] No properties to set");
+            let _ = std::io::stderr().flush();
         }
 
+        eprintln!("[DEBUG] Releasing SetProperties interface");
+        let _ = std::io::stderr().flush();
         unsafe {
             // Release the interface
             let set_vtable = &*(*set_properties).vtable;
