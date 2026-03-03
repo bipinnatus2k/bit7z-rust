@@ -6,8 +6,9 @@ use crate::extractor::BitExtractor;
 use crate::ffi::BitLibrary;
 use crate::format::ExtractFormat;
 use crate::error::{Bit7zError, Result};
-use std::io::Write;
-use std::vec::Vec;
+use std::fs;
+use std::io::{Read, Write};
+use tempfile::{NamedTempFile, TempDir};
 
 /// Stream extractor for extracting data to output streams
 ///
@@ -46,13 +47,15 @@ impl<'a> BitStreamExtractor<'a> {
         writer: &mut W,
         index: u32,
     ) -> Result<()> {
-        // Use the existing extract_to_stream method from BitExtractor
-        // We need to create a temporary file from the buffer first
-        self.extractor.extract_to_stream(
-            std::env::temp_dir().join("temp"),
-            writer,
-            index
-        )
+        // Create temporary file from archive buffer
+        let mut temp_archive = NamedTempFile::new()?;
+        temp_archive.write_all(archive_buffer)?;
+        temp_archive.flush()?;
+        
+        let temp_archive_path = temp_archive.path().to_path_buf();
+        
+        // Extract the specific item to the writer stream
+        self.extractor.extract_to_stream(&temp_archive_path, writer, index)
     }
 
     /// Extract all items from archive to a map of buffers
@@ -67,13 +70,44 @@ impl<'a> BitStreamExtractor<'a> {
         &self,
         archive_buffer: &[u8],
     ) -> Result<Vec<(String, Vec<u8>)>> {
-        // This is a complex operation that would require:
-        // 1. Reading the archive to get all items
-        // 2. Extracting each item individually to streams
-        // For simplicity, we'll return an error indicating this feature needs implementation
-        Err(Bit7zError::FeatureNotSupported(
-            "Stream extraction of all items not yet implemented".to_string()
-        ))
+        // Create temporary file from archive buffer
+        let mut temp_archive = NamedTempFile::new()?;
+        temp_archive.write_all(archive_buffer)?;
+        temp_archive.flush()?;
+        
+        let temp_archive_path = temp_archive.path().to_path_buf();
+        
+        // Create temporary directory for extraction
+        let temp_dir = TempDir::new()?;
+        let temp_dir_path = temp_dir.path().to_path_buf();
+        
+        // Extract all items
+        self.extractor.extract(&temp_archive_path, &temp_dir_path)?;
+        
+        // Read all extracted files into memory buffers
+        let mut result = Vec::new();
+        
+        // Walk through the extracted files
+        for entry in fs::read_dir(temp_dir.path())? {
+            let entry = entry?;
+            let path = entry.path();
+            
+            if path.is_file() {
+                // Get relative path from temp_dir
+                let relative_path = path.strip_prefix(temp_dir.path())
+                    .map_err(|e| Bit7zError::ExtractFailed(format!("Failed to get relative path: {}", e)))?
+                    .to_str()
+                    .ok_or_else(|| Bit7zError::ExtractFailed("Invalid path string".to_string()))?
+                    .to_string();
+                
+                // Read file content
+                let content = fs::read(&path)?;
+                
+                result.push((relative_path, content));
+            }
+        }
+        
+        Ok(result)
     }
 
     /// Test archive integrity without extracting
@@ -85,8 +119,14 @@ impl<'a> BitStreamExtractor<'a> {
     /// * `Ok(())` - Success (archive is valid)
     /// * `Err(Bit7zError)` - Error (archive is invalid or other error)
     pub fn test(&self, archive_buffer: &[u8]) -> Result<()> {
-        // Use the existing test method from BitExtractor
-        // We need to create a temporary file from the buffer first
-        self.extractor.test(std::env::temp_dir().join("temp"))
+        // Create temporary file from archive buffer
+        let mut temp_archive = NamedTempFile::new()?;
+        temp_archive.write_all(archive_buffer)?;
+        temp_archive.flush()?;
+        
+        let temp_archive_path = temp_archive.path().to_path_buf();
+        
+        // Test the archive
+        self.extractor.test(&temp_archive_path)
     }
 }

@@ -6,8 +6,9 @@ use crate::compressor::BitCompressor;
 use crate::ffi::BitLibrary;
 use crate::format::CompressionFormat;
 use crate::error::{Bit7zError, Result};
-use std::io::Read;
-use std::vec::Vec;
+use std::fs;
+use std::io::{Read, Write};
+use tempfile::NamedTempFile;
 
 /// Stream compressor for compressing data from input streams
 ///
@@ -131,38 +132,23 @@ impl<'a> BitStreamCompressor<'a> {
         mut reader: R,
         item_name: String,
     ) -> Result<Vec<u8>> {
-        // Create a temporary file to store stream content
-        let temp_path = std::env::temp_dir().join(format!(
-            "bit7z_stream_{}.tmp",
-            std::process::id()
-        ));
-
-        // Copy stream to temp file
-        let mut temp_file = std::fs::File::create(&temp_path)
-            .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+        // Create temporary file for stream content
+        let mut input_temp = NamedTempFile::new()?;
+        std::io::copy(&mut reader, &mut input_temp)?;
+        input_temp.flush()?;
         
-        std::io::copy(&mut reader, &mut temp_file)
-            .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+        let input_path = input_temp.path().to_path_buf();
         
-        drop(temp_file);
-
-        // Use the existing compress_from_stream method from BitCompressor
-        // Note: We'll need to modify this approach since compress_from_stream expects a file path
-        // For now, we'll return an error indicating this feature needs refinement
-        let result = self.compressor.compress_from_stream(
-            std::fs::File::open(&temp_path)?,
-            std::env::temp_dir().join("output"),
-            item_name
-        );
+        // Create temporary file for output archive
+        let output_temp = NamedTempFile::new()?;
+        let output_path = output_temp.path().to_path_buf();
         
-        // Clean up temp file
-        let _ = std::fs::remove_file(&temp_path);
+        // Compress the input file to the output file with custom name
+        self.compressor.compress_with_aliases(&[(input_path.as_path(), item_name)], &output_path)?;
         
-        result?;
-        // This is a simplified implementation - in reality we'd need to capture the compressed data
-        // For now, we return an error to indicate this is not fully implemented
-        Err(Bit7zError::FeatureNotSupported(
-            "Stream compression returning buffer not yet fully implemented".to_string()
-        ))
+        // Read the compressed data
+        let compressed_data = fs::read(output_path)?;
+        
+        Ok(compressed_data)
     }
 }
