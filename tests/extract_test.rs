@@ -34,26 +34,7 @@ use std::collections::HashMap;
 
 /// 获取 7-Zip 库路径
 fn get_library_path() -> Option<String> {
-    // 尝试从环境变量获取
-    if let Ok(path) = std::env::var("BIT7Z_LIBRARY_PATH") {
-        return Some(path);
-    }
-    
-    // 尝试常见路径
-    let common_paths = [
-        "/usr/lib/7zip/7z.so",
-        "/usr/lib/x86_64-linux-gnu/7zip/7z.so",
-        "/usr/local/lib/7zip/7z.so",
-        "/opt/7zip/7z.so",
-    ];
-    
-    for path in &common_paths {
-        if Path::new(path).exists() {
-            return Some(path.to_string());
-        }
-    }
-    
-    None
+    test_utils::find_library_path()
 }
 
 /// 测试文件信息

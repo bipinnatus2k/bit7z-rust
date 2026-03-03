@@ -2,9 +2,12 @@ use bit7z_rust::{BitLibrary, BitCompressor, CompressionFormat};
 use std::fs;
 use tempfile::TempDir;
 
+mod test_utils;
+use test_utils::find_library_path;
+
 #[test]
 fn test_simple_compress() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建测试文件

@@ -9,11 +9,14 @@ use bit7z_rust::{
 use std::fs;
 use tempfile::TempDir;
 
+mod test_utils;
+use test_utils::find_library_path;
+
 /// 测试不同压缩级别的性能
 #[test]
 #[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，性能压测暂不纳入默认测试"]
 fn test_compression_level_performance() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建测试数据（10MB）
@@ -58,7 +61,7 @@ fn test_compression_level_performance() {
 #[test]
 #[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，性能压测暂不纳入默认测试"]
 fn test_format_performance() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建测试数据（5MB）
@@ -96,7 +99,7 @@ fn test_format_performance() {
 #[test]
 #[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，性能压测暂不纳入默认测试"]
 fn test_memory_operation_performance() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
 
     // 创建内存数据（2MB）
     let test_data = vec![0u8; 2_000_000];

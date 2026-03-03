@@ -9,10 +9,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
+mod test_utils;
+use test_utils::find_library_path;
+
 /// 测试多线程压缩
 #[test]
 fn test_concurrent_compression() {
-    let lib = Arc::new(BitLibrary::new::<PathBuf>(None).unwrap());
+    let lib = Arc::new(BitLibrary::new::<String>(find_library_path().into()).unwrap()); // 使用字符串路径初始化库
     let test_data = vec![0u8; 1_000_000]; // 1MB 测试数据
     
     // 创建多个线程进行压缩
@@ -50,7 +53,7 @@ fn test_concurrent_compression() {
 /// 测试多线程解压
 #[test]
 fn test_concurrent_extraction() {
-    let lib = Arc::new(BitLibrary::new::<PathBuf>(None).unwrap());
+    let lib = Arc::new(BitLibrary::new::<String>(find_library_path().into()).unwrap()); // 使用字符串路径初始化库
     let test_data = vec![0u8; 1_000_000]; // 1MB 测试数据
     
     // 先压缩数据
@@ -92,7 +95,7 @@ fn test_concurrent_extraction() {
 /// 测试混合并发操作（压缩和解压同时进行）
 #[test]
 fn test_mixed_concurrent_operations() {
-    let lib = Arc::new(BitLibrary::new::<PathBuf>(None).unwrap());
+    let lib = Arc::new(BitLibrary::new::<String>(find_library_path().into()).unwrap()); // 使用字符串路径初始化库
     let test_data = vec![0u8; 500_000]; // 500KB 测试数据
     
     // 先压缩一些数据用于解压测试

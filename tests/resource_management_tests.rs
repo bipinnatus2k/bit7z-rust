@@ -7,11 +7,14 @@ use bit7z_rust::{
 use std::fs;
 use tempfile::TempDir;
 
+mod test_utils;
+use test_utils::find_library_path;
+
 /// 测试大型档案处理
 #[test]
 #[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，资源边界测试暂不纳入默认测试"]
 fn test_large_archive_handling() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建一个较大的测试文件（1MB）
@@ -40,7 +43,7 @@ fn test_large_archive_handling() {
 /// 测试空文件处理
 #[test]
 fn test_empty_file_handling() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建空文件
@@ -67,7 +70,7 @@ fn test_empty_file_handling() {
 #[test]
 #[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，资源边界测试暂不纳入默认测试"]
 fn test_special_char_filenames() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建包含特殊字符的文件名

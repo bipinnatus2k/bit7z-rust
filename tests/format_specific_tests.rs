@@ -9,6 +9,9 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use tempfile::TempDir;
 
+mod test_utils;
+use test_utils::find_library_path;
+
 fn ffi_test_guard() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -81,7 +84,7 @@ fn verify_archive_content(
 #[ignore = "UpdateCallback/格式处理在当前 FFI 实现下仍不稳定，需后续专项修复"]
 fn test_single_file_formats() {
     let _guard = ffi_test_guard();
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 测试 GZip 格式
@@ -117,7 +120,7 @@ fn test_single_file_formats() {
 #[ignore = "UpdateCallback/格式处理在当前 FFI 实现下仍不稳定，需后续专项修复"]
 fn test_tar_format() {
     let _guard = ffi_test_guard();
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建 TAR 格式档案
@@ -156,7 +159,7 @@ fn test_tar_format() {
 #[ignore = "UpdateCallback/格式处理在当前 FFI 实现下仍不稳定，需后续专项修复"]
 fn test_zip_format_specific() {
     let _guard = ffi_test_guard();
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建 ZIP 格式档案
@@ -195,7 +198,7 @@ fn test_zip_format_specific() {
 #[ignore = "UpdateCallback/格式处理在当前 FFI 实现下仍不稳定，需后续专项修复"]
 fn test_7z_format_specific() {
     let _guard = ffi_test_guard();
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建 7z 格式档案

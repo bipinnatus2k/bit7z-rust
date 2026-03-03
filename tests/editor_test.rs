@@ -4,10 +4,13 @@ use bit7z_rust::{BitLibrary, BitArchiveEditor, CompressionFormat, DeletePolicy};
 use std::fs;
 use std::path::Path;
 
+mod test_utils;
+use test_utils::find_library_path;
+
 #[test]
 fn test_archive_editor_creation() {
     // 测试我们能否创建 BitArchiveEditor 结构体
-    let lib = BitLibrary::new(Some("/usr/lib/7zip/7z.so")).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     
     // 创建一个简单的测试文件来模拟一个档案
     let test_archive = "test_archive.7z";
@@ -35,7 +38,7 @@ fn test_delete_policy_enum() {
 #[test]
 fn test_editor_struct_fields() {
     // 测试编辑器结构体的基本字段
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     
     // 我们不能真正创建编辑器，因为需要一个真实档案
     // 但我们可以测试导入和基本类型

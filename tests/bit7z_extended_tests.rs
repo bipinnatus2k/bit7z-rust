@@ -1,16 +1,19 @@
 //! 扩展测试 - 测试所有新增功能
-
+//! 测试 BitMemCompressor 和 BitMemExtractor 基本功能
 use bit7z_rust::{
     BitLibrary, BitMemCompressor, BitMemExtractor,
     CompressionFormat, ExtractFormat,
 };
-use std::fs;
+use std::{fs, path::Path};
 use tempfile::TempDir;
+
+mod test_utils;
+use test_utils::find_library_path;
 
 /// 测试 BitMemCompressor 和 BitMemExtractor 基本功能
 #[test]
 fn test_mem_compressor_extractor() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
 
     // 创建测试文件
@@ -45,7 +48,7 @@ fn test_mem_compressor_extractor() {
 /// 测试不同格式的内存压缩
 #[test]
 fn test_mem_formats() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let test_content = b"Format test content";
 
     let formats = [
@@ -75,7 +78,7 @@ fn test_mem_formats() {
 /// 测试压缩级别
 #[test]
 fn test_compression_levels() {
-    let lib = BitLibrary::new::<String>(None).unwrap();
+    let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let test_content = vec![0u8; 100_000]; // 100KB 可压缩数据
 
     let levels = [

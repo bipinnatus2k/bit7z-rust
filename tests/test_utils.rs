@@ -11,6 +11,51 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub fn library_search_paths() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &[
+            "C:\\Program Files\\7-Zip\\7z.dll",
+            "C:\\Program Files (x86)\\7-Zip\\7z.dll",
+            "C:\\7-Zip\\7z.dll",
+        ]
+    } else if cfg!(target_os = "macos") {
+        &[
+            "/opt/homebrew/lib/7z.dylib",
+            "/usr/local/lib/7z.dylib",
+            "/usr/lib/7z.dylib",
+            "/opt/homebrew/lib/7zip/7z.dylib",
+            "/usr/local/lib/7zip/7z.dylib",
+        ]
+    } else {
+        &[
+            "/usr/lib/7zip/7z.so",
+            "/usr/lib/x86_64-linux-gnu/7zip/7z.so",
+            "/usr/local/lib/7zip/7z.so",
+            "/opt/7zip/7z.so",
+            "/usr/lib/7z.so",
+            "/usr/local/lib/7z.so",
+        ]
+    }
+}
+
+pub fn find_library_path() -> Option<String> {
+    if let Ok(path) = std::env::var("BIT7Z_LIBRARY_PATH") {
+        return Some(path);
+    }
+
+    for path in library_search_paths() {
+        if Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+
+    None
+}
+
+pub fn find_library() -> PathBuf {
+    find_library_path().unwrap().into()
+}
+
 /// 文件验证结果
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileVerificationResult {
