@@ -776,18 +776,36 @@ impl ExtractCallback {
 
         let compress_progress_vtable = Box::pin(ICompressProgressInfoVTable {
             base: crate::ffi::IUnknownVTable {
-                query_interface: Self::query_interface,
-                add_ref: Self::add_ref,
-                release: Self::release,
+                query_interface: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                >(Self::compress_progress_query_interface) },
+                add_ref: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::compress_progress_add_ref) },
+                release: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::compress_progress_release) },
             },
             set_ratio_info: Self::set_ratio_info,
         });
 
         let crypto_password_vtable = Box::pin(ICryptoGetTextPasswordVTable {
             base: crate::ffi::IUnknownVTable {
-                query_interface: Self::query_interface,
-                add_ref: Self::add_ref,
-                release: Self::release,
+                query_interface: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                >(Self::crypto_password_query_interface) },
+                add_ref: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::crypto_password_add_ref) },
+                release: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::crypto_password_release) },
             },
             crypto_get_text_password: Self::get_text_password,
         });
@@ -829,18 +847,36 @@ impl ExtractCallback {
 
         let compress_progress_vtable = Box::pin(ICompressProgressInfoVTable {
             base: crate::ffi::IUnknownVTable {
-                query_interface: Self::query_interface,
-                add_ref: Self::add_ref,
-                release: Self::release,
+                query_interface: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                >(Self::compress_progress_query_interface) },
+                add_ref: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::compress_progress_add_ref) },
+                release: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::compress_progress_release) },
             },
             set_ratio_info: Self::set_ratio_info,
         });
 
         let crypto_password_vtable = Box::pin(ICryptoGetTextPasswordVTable {
             base: crate::ffi::IUnknownVTable {
-                query_interface: Self::query_interface,
-                add_ref: Self::add_ref,
-                release: Self::release,
+                query_interface: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                >(Self::crypto_password_query_interface) },
+                add_ref: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::crypto_password_add_ref) },
+                release: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::crypto_password_release) },
             },
             crypto_get_text_password: Self::get_text_password,
         });
@@ -863,6 +899,12 @@ impl ExtractCallback {
         self as *const ExtractCallback as *mut ExtractCallback as *mut IArchiveExtractCallback
     }
 
+    fn as_i_compress_progress_info(&self) -> *mut ICompressProgressInfo {
+        let base = self as *const ExtractCallback as *const u8;
+        let offset = std::mem::size_of::<Pin<Box<IArchiveExtractCallbackVTable>>>();
+        unsafe { base.add(offset) as *mut ICompressProgressInfo }
+    }
+
     /// Release the caller's reference to the callback.
     /// This should be called after extract returns to decrement the ref count.
     /// If this was the last reference, the callback will be freed.
@@ -883,7 +925,82 @@ impl ExtractCallback {
     }
 
     fn as_i_crypto_get_text_password(&self) -> *mut ICryptoGetTextPassword {
-        self as *const ExtractCallback as *mut ExtractCallback as *mut ICryptoGetTextPassword
+        let base = self as *const ExtractCallback as *const u8;
+        let offset = std::mem::size_of::<Pin<Box<IArchiveExtractCallbackVTable>>>()
+            + std::mem::size_of::<Pin<Box<ICompressProgressInfoVTable>>>();
+        unsafe { base.add(offset) as *mut ICryptoGetTextPassword }
+    }
+
+    unsafe fn from_archive_extract_callback(this: *mut IArchiveExtractCallback) -> *mut ExtractCallback {
+        this as *mut ExtractCallback
+    }
+
+    unsafe fn from_compress_progress(this: *mut ICompressProgressInfo) -> *mut ExtractCallback {
+        let offset = std::mem::size_of::<Pin<Box<IArchiveExtractCallbackVTable>>>();
+        (this as *const u8).sub(offset) as *mut ExtractCallback
+    }
+
+    unsafe fn from_crypto_password(this: *mut ICryptoGetTextPassword) -> *mut ExtractCallback {
+        let offset = std::mem::size_of::<Pin<Box<IArchiveExtractCallbackVTable>>>()
+            + std::mem::size_of::<Pin<Box<ICompressProgressInfoVTable>>>();
+        (this as *const u8).sub(offset) as *mut ExtractCallback
+    }
+
+    unsafe extern "system" fn extract_query_interface(
+        this: *mut IArchiveExtractCallback,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        let callback = Self::from_archive_extract_callback(this);
+        Self::query_interface(callback as *mut crate::ffi::IUnknown, iid, out)
+    }
+
+    unsafe extern "system" fn extract_add_ref(this: *mut IArchiveExtractCallback) -> u32 {
+        let callback = Self::from_archive_extract_callback(this);
+        Self::add_ref(callback as *mut crate::ffi::IUnknown)
+    }
+
+    unsafe extern "system" fn extract_release(this: *mut IArchiveExtractCallback) -> u32 {
+        let callback = Self::from_archive_extract_callback(this);
+        Self::release(callback as *mut crate::ffi::IUnknown)
+    }
+
+    unsafe extern "system" fn compress_progress_query_interface(
+        this: *mut ICompressProgressInfo,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        let callback = Self::from_compress_progress(this);
+        Self::query_interface(callback as *mut crate::ffi::IUnknown, iid, out)
+    }
+
+    unsafe extern "system" fn compress_progress_add_ref(this: *mut ICompressProgressInfo) -> u32 {
+        let callback = Self::from_compress_progress(this);
+        Self::add_ref(callback as *mut crate::ffi::IUnknown)
+    }
+
+    unsafe extern "system" fn compress_progress_release(this: *mut ICompressProgressInfo) -> u32 {
+        let callback = Self::from_compress_progress(this);
+        Self::release(callback as *mut crate::ffi::IUnknown)
+    }
+
+    unsafe extern "system" fn crypto_password_query_interface(
+        this: *mut ICryptoGetTextPassword,
+        iid: *const crate::ffi::GUID,
+        out: *mut *mut c_void,
+    ) -> HRESULT {
+        let callback = Self::from_crypto_password(this);
+        Self::query_interface(callback as *mut crate::ffi::IUnknown, iid, out)
+    }
+
+    unsafe extern "system" fn crypto_password_add_ref(this: *mut ICryptoGetTextPassword) -> u32 {
+        let callback = Self::from_crypto_password(this);
+        Self::add_ref(callback as *mut crate::ffi::IUnknown)
+    }
+
+    unsafe extern "system" fn crypto_password_release(this: *mut ICryptoGetTextPassword) -> u32 {
+        let callback = Self::from_crypto_password(this);
+        Self::release(callback as *mut crate::ffi::IUnknown)
     }
 
     unsafe extern "system" fn query_interface(
@@ -925,10 +1042,7 @@ impl ExtractCallback {
         // According to 7-Zip source, ExtractCallback implements this interface
         let iid_compress_progress = crate::ffi::IID_ICompressProgressInfo;
         if *iid == iid_compress_progress {
-            // Return the compress_progress_vtable pointer
-            // Note: We return the vtable pointer, but the object pointer is still 'this'
-            // The caller will use this vtable to call SetRatioInfo
-            *out = &(*callback).compress_progress_vtable as *const _ as *mut c_void;
+            *out = (*callback).as_i_compress_progress_info() as *mut c_void;
             ExtractCallback::add_ref(this);
             return 0; // S_OK
         }
@@ -936,8 +1050,7 @@ impl ExtractCallback {
         // IID_ICryptoGetTextPassword (for password-protected archives)
         let iid_crypto = crate::ffi::IID_ICryptoGetTextPassword;
         if *iid == iid_crypto {
-            // Return the crypto_password_vtable pointer
-            *out = &(*callback).crypto_password_vtable as *const _ as *mut c_void;
+            *out = (*callback).as_i_crypto_get_text_password() as *mut c_void;
             ExtractCallback::add_ref(this);
             return 0; // S_OK
         }
