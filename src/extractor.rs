@@ -69,15 +69,14 @@ impl<'a> BitExtractor<'a> {
             let open_callback_box = Box::new(open_callback);
             let open_callback_ptr = Box::into_raw(open_callback_box);
 
-            let max_check_start_position: u64 = 0;
             let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
                 (*in_stream_ptr).as_i_in_stream(),
-                &max_check_start_position,
+                ptr::null(),
                 (*open_callback_ptr).as_i_archive_open_callback(),
             );
 
-            if open_result != 0 && open_result != 1 {
+            if open_result != 0 {
                 // Clean up on failure
                 let _ = Box::from_raw(in_stream_ptr);
                 let _ = Box::from_raw(open_callback_ptr);
@@ -116,7 +115,7 @@ impl<'a> BitExtractor<'a> {
             // The callback will be freed when ref_count reaches 0
             ExtractCallback::release_caller_reference(callback_ptr);
 
-            if result != 0 && result != 1 {
+            if result != 0 {
                 // Clean up on failure
                 let _ = Box::from_raw(in_stream_ptr);
                 let _ = Box::from_raw(open_callback_ptr);
@@ -223,17 +222,16 @@ impl<'a> BitExtractor<'a> {
                 crate::stream::FileStream::new(archive_path.as_ref())?
             ));
 
-            let max_check_start_position: u64 = 0;
             let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
 
             let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
                 in_stream.as_i_in_stream(),
-                &max_check_start_position,
+                ptr::null(),
                 open_callback.as_i_archive_open_callback(),
             );
 
-            if open_result != 0 && open_result != 1 {
+            if open_result != 0 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", open_result
                 )));
@@ -262,7 +260,7 @@ impl<'a> BitExtractor<'a> {
                 callback as *mut ExtractCallback as *mut IArchiveExtractCallback,
             );
 
-            if result != 0 && result != 1 {
+            if result != 0 {
                 return Err(Bit7zError::ExtractFailed(format!(
                     "Extract failed with HRESULT: 0x{:X}", result
                 )));
@@ -405,17 +403,16 @@ impl<'a> BitExtractor<'a> {
                 crate::stream::FileStream::new(archive_path.as_ref())?
             ));
 
-            let max_check_start_position: u64 = 0;
             let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
 
             let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
                 in_stream.as_i_in_stream(),
-                &max_check_start_position,
+                ptr::null(),
                 open_callback.as_i_archive_open_callback(),
             );
 
-            if open_result != 0 && open_result != 1 {
+            if open_result != 0 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", open_result
                 )));
@@ -450,7 +447,7 @@ impl<'a> BitExtractor<'a> {
                 callback as *mut ExtractCallback as *mut IArchiveExtractCallback,
             );
 
-            if result != 0 && result != 1 {
+            if result != 0 {
                 return Err(Bit7zError::ArchiveIntegrityCheckFailed(format!(
                     "Archive test failed with HRESULT: 0x{:X}", result
                 )));
@@ -472,23 +469,18 @@ impl<'a> BitExtractor<'a> {
                 crate::stream::FileStream::new(archive_path.as_ref())?
             ));
 
-            // For some formats (like TAR), we need to pass null or they fail to open
-            let max_check_start_position: u64 = 0;
-
             let open_callback = Box::leak(Box::new(OpenCallback::new(archive_path.as_ref())));
 
-            // Open archive - pass max_check_start_position as pointer (0 means search from file start)
-            // This matches bit7z's ArchiveStartOffset::FileStart behavior
+            // Match bit7z default behavior: pass nullptr for maxCheckStartPosition.
             let open_result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
                 in_stream.as_i_in_stream(),
-                &max_check_start_position,
+                ptr::null(),
                 open_callback.as_i_archive_open_callback(),
             );
 
-            // S_OK (0) and S_FALSE (1) are both success codes
-            // S_FALSE can be returned for some formats or when archive is not fully recognized
-            if open_result != 0 && open_result != 1 {
+            // Match bit7z: only S_OK is success for open().
+            if open_result != 0 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", open_result
                 )));
@@ -527,9 +519,7 @@ impl<'a> BitExtractor<'a> {
 
             let _ = ((*(*archive_ptr.as_ptr()).vtable).close)(archive_ptr.as_ptr());
 
-            // S_OK (0) and S_FALSE (1) are both success codes
-            // S_FALSE is returned for some formats (like GZip/BZip2/XZ) after successful extraction
-            if result != 0 && result != 1 {
+            if result != 0 {
                 return Err(Bit7zError::ExtractFailed(format!(
                     "Extraction failed: HRESULT 0x{:08X}", result
                 )));
@@ -554,18 +544,14 @@ impl<'a> BitExtractor<'a> {
             // Create open callback (required by 7-Zip)
             let open_callback = Box::leak(Box::new(OpenCallback::new(Path::new(""))));
 
-            // max_check_start_position pointer (0 means search from beginning)
-            let max_check_start_position: u64 = 0;
-
             let result = ((*(*archive_ptr.as_ptr()).vtable).open)(
                 archive_ptr.as_ptr(),
                 in_stream.as_i_in_stream(),
-                &max_check_start_position,  // Pass as pointer
+                ptr::null(),
                 open_callback.as_i_archive_open_callback(),
             );
 
-            // S_OK (0) and S_FALSE (1) are both success codes
-            if result != 0 && result != 1 {
+            if result != 0 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive from buffer: HRESULT 0x{:08X}", result
                 )));
@@ -592,9 +578,7 @@ impl<'a> BitExtractor<'a> {
 
             let _ = ((*(*archive_ptr.as_ptr()).vtable).close)(archive_ptr.as_ptr());
 
-            // S_OK (0) and S_FALSE (1) are both success codes
-            // S_FALSE is returned for some formats (like GZip/BZip2/XZ) after successful extraction
-            if result != 0 && result != 1 {
+            if result != 0 {
                 return Err(Bit7zError::ExtractFailed(format!(
                     "Extraction failed: HRESULT 0x{:08X}", result
                 )));

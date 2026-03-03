@@ -371,7 +371,13 @@ impl UpdateCallback {
 
     /// Get as IArchiveUpdateCallback pointer
     pub fn as_i_archive_update_callback(&self) -> *mut IArchiveUpdateCallback {
-        self as *const UpdateCallback as *mut UpdateCallback as *mut IArchiveUpdateCallback
+        // IArchiveUpdateCallback subobject starts at `update_callback_vtable` field.
+        // Returning the object base pointer here causes vtable mismatch and can crash
+        // when 7-Zip calls callback methods directly.
+        let base = self as *const UpdateCallback as *const u8;
+        let offset = std::mem::size_of::<*const IUnknownVTable>()
+            + std::mem::size_of::<*const IProgressVTable>();
+        unsafe { base.add(offset) as *mut IArchiveUpdateCallback }
     }
 
     /// Release the caller's reference to the callback.
@@ -657,7 +663,10 @@ impl UpdateCallback {
 
         // Call progress callback if registered
         if let Some(ref progress_cb) = (*callback).progress_callback {
-            let completed = if !complete_value.is_null() { *complete_value } else { 0 };
+            // p7zip may pass a non-pointer scalar here on some builds/ABIs.
+            // Never dereference raw callback pointers directly to avoid crashes.
+            let _ = complete_value;
+            let completed = 0;
             if let Ok(cb) = progress_cb.lock() {
                 cb(completed, 0);
             }
@@ -674,7 +683,10 @@ impl UpdateCallback {
 
         // Call progress callback if registered
         if let Some(ref progress_cb) = (*callback).progress_callback {
-            let completed = if !complete_value.is_null() { *complete_value } else { 0 };
+            // p7zip may pass a non-pointer scalar here on some builds/ABIs.
+            // Never dereference raw callback pointers directly to avoid crashes.
+            let _ = complete_value;
+            let completed = 0;
             if let Ok(cb) = progress_cb.lock() {
                 cb(completed, 0);
             }
@@ -691,7 +703,10 @@ impl UpdateCallback {
 
         // Call progress callback if registered
         if let Some(ref progress_cb) = (*callback).progress_callback {
-            let completed = if !complete_value.is_null() { *complete_value } else { 0 };
+            // p7zip may pass a non-pointer scalar here on some builds/ABIs.
+            // Never dereference raw callback pointers directly to avoid crashes.
+            let _ = complete_value;
+            let completed = 0;
             if let Ok(cb) = progress_cb.lock() {
                 cb(completed, 0);
             }
@@ -729,6 +744,7 @@ impl UpdateCallback {
         index_in_archive: *mut u32,
     ) -> HRESULT {
         eprintln!("[Callback] GetUpdateItemInfo: index={}", index);
+        let _ = std::io::stderr().flush();
 
         let callback = Self::from_update_callback(this);
         let items = &(*callback).input_items;
@@ -748,7 +764,8 @@ impl UpdateCallback {
         if !index_in_archive.is_null() {
             *index_in_archive = 0xFFFFFFFF; // -1 = not in archive (new item)
         }
-        eprintln!("[Callback] GetUpdateItemInfo: returning newData=1, newProperties=1, indexInArchive=-1");
+        eprintln!("[Callback] GetUpdateItemInfo: returning newData={}, newProperties={}, indexInArchive={}", *new_data, *new_properties, *index_in_archive);
+        let _ = std::io::stderr().flush();
         0 // S_OK
     }
 
@@ -825,7 +842,10 @@ impl UpdateCallback {
             }
             PROPID::Attrib => {
                 (*value).vt = 19; // VT_UI4
-                (*value).data[0] = 0;
+                // FILE_ATTRIBUTE_NORMAL for regular files.
+                // Some handlers (notably ZIP on p7zip) may skip items when
+                // attributes are reported as zero.
+                (*value).data[0] = 0x80;
                 (*value).data[1] = 0;
                 (*value).data[2] = 0;
                 (*value).data[3] = 0;
@@ -909,8 +929,10 @@ impl UpdateCallback {
 
     unsafe extern "system" fn set_operation_result(
         _this: *mut IArchiveUpdateCallback,
-        _result: i32,
+        result: i32,
     ) -> HRESULT {
+        eprintln!("[Callback] SetOperationResult: {}", result);
+        let _ = std::io::stderr().flush();
         0 // S_OK
     }
 
@@ -1046,8 +1068,8 @@ impl UpdateCallback {
         _index: u32,
         _size: *mut u64,
     ) -> HRESULT {
-        // Not supported for single-volume archives
-        -2147467262 // E_NOINTERFACE
+        // Return S_FALSE for single-volume archives
+        1 // S_FALSE
     }
 
     unsafe extern "system" fn get_volume_stream(
@@ -1055,8 +1077,8 @@ impl UpdateCallback {
         _index: u32,
         _volume_stream: *mut *mut ISequentialOutStream,
     ) -> HRESULT {
-        // Not supported for single-volume archives
-        -2147467262 // E_NOINTERFACE
+        // Return S_FALSE for single-volume archives
+        1 // S_FALSE
     }
 
     // ========== ICompressProgressInfo implementation ==========

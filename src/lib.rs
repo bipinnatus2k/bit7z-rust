@@ -11,7 +11,7 @@
 //! 
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Load 7-Zip library
-//!     let lib = BitLibrary::new(None)?;
+//!     let lib = BitLibrary::new::<String>(None)?;
 //!     
 //!     // Create a compressor for ZIP format
 //!     let mut compressor = BitCompressor::new(&lib, CompressionFormat::Zip);

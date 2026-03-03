@@ -513,12 +513,12 @@ impl<'a> BitCompressor<'a> {
             let archive = archive_ptr.as_ptr();
 
             // Set archive properties (compression level, method, etc.)
-            // DISABLED: p7zip may not support custom properties
-            // eprintln!("[compress_internal] Calling set_archive_properties");
-            // let _ = std::io::stderr().flush();
-            // self.set_archive_properties(archive)?;
-            // eprintln!("[compress_internal] set_archive_properties done");
-            // let _ = std::io::stderr().flush();
+            // Note: p7zip may not support custom properties, so we ignore errors
+            eprintln!("[compress_internal] Calling set_archive_properties");
+            let _ = std::io::stderr().flush();
+            let _ = self.set_archive_properties(archive); // Ignore errors
+            eprintln!("[compress_internal] set_archive_properties done");
+            let _ = std::io::stderr().flush();
 
             // Create update callback on the heap
             // We need to use Box::new and Box::into_raw because the COM interface
@@ -542,14 +542,18 @@ impl<'a> BitCompressor<'a> {
             eprintln!("[DEBUG] Calling UpdateItems with {} items", num_items);
             let _ = std::io::stderr().flush();
             let archive_vtable = &*(*archive).vtable;
-            eprintln!("[DEBUG] archive_vtable={:p}, update_items_fn={:p}", 
+            eprintln!("[DEBUG] archive_vtable={:p}, update_items_fn={:p}",
                 archive_vtable, archive_vtable.update_items);
+            let out_stream_ptr = out_stream.as_i_out_stream() as *mut crate::ffi::ISequentialOutStream;
+            eprintln!("[DEBUG] out_stream_ptr={:p}", out_stream_ptr);
+            let callback_iface_ptr = (*callback_ptr).as_i_archive_update_callback();
+            eprintln!("[DEBUG] callback_ptr={:p}, callback_iface_ptr={:p}", callback_ptr, callback_iface_ptr);
             let _ = std::io::stderr().flush();
             let result = (archive_vtable.update_items)(
                 archive,
-                out_stream.as_i_out_stream() as *mut crate::ffi::ISequentialOutStream,
+                out_stream_ptr,
                 num_items,
-                callback_ptr as *mut IArchiveUpdateCallback,
+                callback_iface_ptr as *mut IArchiveUpdateCallback,
             );
             eprintln!("[DEBUG] UpdateItems returned 0x{:X}", result);
             let _ = std::io::stderr().flush();
@@ -560,8 +564,8 @@ impl<'a> BitCompressor<'a> {
             UpdateCallback::release_caller_reference(callback_ptr);
             eprintln!("[DEBUG] Done");
 
-            // S_OK (0) and S_FALSE (1) are both success codes
-            if result != 0 && result != 1 {
+            // Match bit7z behavior: UpdateItems must return S_OK.
+            if result != 0 {
                 return Err(Bit7zError::CompressFailed(
                     format!("UpdateItems failed with HRESULT: 0x{:X}", result)
                 ));

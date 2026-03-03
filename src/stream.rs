@@ -132,6 +132,19 @@ impl FileStream {
             return -2147467261; // E_POINTER
         }
 
+        if !processed_size.is_null() {
+            write_unaligned(processed_size, 0);
+        }
+
+        if size == 0 {
+            // 7-Zip expects S_OK for zero-byte reads.
+            return 0; // S_OK
+        }
+
+        if data.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
         let stream = this as *mut FileStream;
         let file = &mut (*stream).file;
 
@@ -142,12 +155,9 @@ impl FileStream {
                 if !processed_size.is_null() {
                     write_unaligned(processed_size, n_u32);
                 }
-
-                if n == 0 && size > 0 {
-                    1 // S_FALSE (end of stream)
-                } else {
-                    0 // S_OK
-                }
+                // Match bit7z/7-Zip stream contract:
+                // EOF is reported as processed_size = 0 with S_OK.
+                0 // S_OK
             }
             Err(_e) => {
                 if !processed_size.is_null() {
@@ -292,6 +302,18 @@ impl FileStreamWrite {
             return -2147467261; // E_POINTER
         }
 
+        if !processed_size.is_null() {
+            write_unaligned(processed_size, 0);
+        }
+
+        if size == 0 {
+            return 0; // S_OK
+        }
+
+        if data.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
         eprintln!("[FileStreamWrite::write] size={}, this={:?}", size, this);
 
         let stream = this as *mut FileStreamWrite;
@@ -322,6 +344,10 @@ impl FileStreamWrite {
         seek_origin: u32,
         new_position: *mut u64,
     ) -> crate::ffi::HRESULT {
+        if this.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
         let stream = this as *mut FileStreamWrite;
         let file = &mut (*stream).file;
 
@@ -334,7 +360,9 @@ impl FileStreamWrite {
 
         match file.seek(from) {
             Ok(pos) => {
-                *new_position = pos;
+                if !new_position.is_null() {
+                    write_unaligned(new_position, pos);
+                }
                 0
             }
             Err(_) => -2147467259,
@@ -446,16 +474,25 @@ impl BufferInStream {
             return -2147467261; // E_POINTER
         }
 
+        if !processed_size.is_null() {
+            write_unaligned(processed_size, 0);
+        }
+
+        if size == 0 {
+            return 0; // S_OK
+        }
+
+        if data.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
         let stream = this as *mut BufferInStream;
         let buffer = &(*stream).buffer;
         let position = &(*stream).position;
         
         let pos = *position.get();
         if pos >= buffer.len() {
-            if !processed_size.is_null() {
-                write_unaligned(processed_size, 0);
-            }
-            return 1; // S_FALSE
+            return 0; // S_OK, EOF
         }
         
         let available = buffer.len() - pos;
@@ -469,11 +506,7 @@ impl BufferInStream {
         }
         *position.get() = pos + to_read;
         
-        if to_read < size as usize {
-            1 // S_FALSE
-        } else {
-            0 // S_OK
-        }
+        0 // S_OK
     }
     
     unsafe extern "system" fn seek(
@@ -482,6 +515,10 @@ impl BufferInStream {
         seek_origin: u32,
         new_position: *mut u64,
     ) -> crate::ffi::HRESULT {
+        if this.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
         let stream = this as *mut BufferInStream;
         let buffer = &(*stream).buffer;
         let position = &(*stream).position;
@@ -493,7 +530,9 @@ impl BufferInStream {
             _ => return -2147467259,
         };
         
-        *new_position = new_pos;
+        if !new_position.is_null() {
+            write_unaligned(new_position, new_pos);
+        }
         *position.get() = new_pos as usize;
         0
     }
@@ -600,6 +639,18 @@ impl BufferOutStream {
             return -2147467261; // E_POINTER
         }
 
+        if !processed_size.is_null() {
+            write_unaligned(processed_size, 0);
+        }
+
+        if size == 0 {
+            return 0; // S_OK
+        }
+
+        if data.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
         let stream = this as *mut BufferOutStream;
         let buffer = (*stream).buffer;
         let position = &(*stream).position;
@@ -628,6 +679,10 @@ impl BufferOutStream {
         seek_origin: u32,
         new_position: *mut u64,
     ) -> crate::ffi::HRESULT {
+        if this.is_null() {
+            return -2147467261; // E_POINTER
+        }
+
         let stream = this as *mut BufferOutStream;
         let buffer = (*stream).buffer;
         let position = &(*stream).position;
@@ -639,7 +694,9 @@ impl BufferOutStream {
             _ => return -2147467259,
         };
 
-        *new_position = new_pos;
+        if !new_position.is_null() {
+            write_unaligned(new_position, new_pos);
+        }
         *position.get() = new_pos as usize;
         0
     }

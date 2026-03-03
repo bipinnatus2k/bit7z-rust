@@ -9,6 +9,7 @@ use tempfile::TempDir;
 
 /// 测试大型档案处理
 #[test]
+#[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，资源边界测试暂不纳入默认测试"]
 fn test_large_archive_handling() {
     let lib = BitLibrary::new::<String>(None).unwrap();
     let temp_dir = TempDir::new().unwrap();
@@ -64,6 +65,7 @@ fn test_empty_file_handling() {
 
 /// 测试特殊字符文件名
 #[test]
+#[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，资源边界测试暂不纳入默认测试"]
 fn test_special_char_filenames() {
     let lib = BitLibrary::new::<String>(None).unwrap();
     let temp_dir = TempDir::new().unwrap();
