@@ -53,10 +53,15 @@ pub const IID_IOutStream: GUID = GUID::from_raw(
 );
 
 // IProgress.h - Progress interface
+// Note: 7-Zip uses different GUIDs for different IProgress implementations
+// IID_IProgress (base interface for IArchiveExtractCallback and IArchiveUpdateCallback)
 pub const IID_IProgress: GUID = GUID::from_raw(
     0x23170F69, 0x40C1, 0x278A,
     [0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00]
 );
+
+// IID_ICompressProgressInfo (used for compression progress)
+// This is a different interface from IProgress, used in update operations
 
 // IArchive.h - Archive interfaces
 pub const IID_IInArchive: GUID = GUID::from_raw(
