@@ -384,11 +384,12 @@ impl FileStreamWrite {
 }
 
 /// Memory input stream for reading from Vec<u8>
+#[repr(C)]
 pub struct BufferInStream {
+    vtable: Pin<Box<IInStreamVTable>>,
     buffer: Vec<u8>,
     position: UnsafeCell<usize>,
     ref_count: UnsafeCell<u32>,
-    vtable: Pin<Box<IInStreamVTable>>,
 }
 
 impl BufferInStream {
@@ -406,10 +407,10 @@ impl BufferInStream {
         });
         
         BufferInStream {
+            vtable,
             buffer,
             position: UnsafeCell::new(0),
             ref_count: UnsafeCell::new(1),
-            vtable,
         }
     }
     
@@ -523,12 +524,20 @@ impl BufferInStream {
         let buffer = &(*stream).buffer;
         let position = &(*stream).position;
         
-        let new_pos = match seek_origin {
-            SEEK_SET => offset as u64,
-            SEEK_CUR => (*position.get() as i64 + offset) as u64,
-            SEEK_END => (buffer.len() as i64 + offset) as u64,
+        let cur = *position.get() as i128;
+        let end = buffer.len() as i128;
+        let off = offset as i128;
+        let new_pos_i128 = match seek_origin {
+            SEEK_SET => off,
+            SEEK_CUR => cur + off,
+            SEEK_END => end + off,
             _ => return -2147467259,
         };
+
+        if new_pos_i128 < 0 || new_pos_i128 > usize::MAX as i128 {
+            return -2147467259; // E_FAIL
+        }
+        let new_pos = new_pos_i128 as u64;
         
         if !new_position.is_null() {
             write_unaligned(new_position, new_pos);
@@ -539,11 +548,12 @@ impl BufferInStream {
 }
 
 /// Memory output stream for writing to Vec<u8>
+#[repr(C)]
 pub struct BufferOutStream {
+    vtable: Pin<Box<IOutStreamVTable>>,
     buffer: *mut Vec<u8>,
     position: UnsafeCell<usize>,
     ref_count: UnsafeCell<u32>,
-    vtable: Pin<Box<IOutStreamVTable>>,
 }
 
 impl BufferOutStream {
@@ -564,10 +574,10 @@ impl BufferOutStream {
         let buffer = Box::leak(Box::new(Vec::new()));
         
         BufferOutStream {
+            vtable,
             buffer,
             position: UnsafeCell::new(0),
             ref_count: UnsafeCell::new(1),
-            vtable,
         }
     }
     
@@ -687,12 +697,20 @@ impl BufferOutStream {
         let buffer = (*stream).buffer;
         let position = &(*stream).position;
 
-        let new_pos = match seek_origin {
-            SEEK_SET => offset as u64,
-            SEEK_CUR => (*position.get() as i64 + offset) as u64,
-            SEEK_END => ((*buffer).len() as i64 + offset) as u64,
+        let cur = *position.get() as i128;
+        let end = (*buffer).len() as i128;
+        let off = offset as i128;
+        let new_pos_i128 = match seek_origin {
+            SEEK_SET => off,
+            SEEK_CUR => cur + off,
+            SEEK_END => end + off,
             _ => return -2147467259,
         };
+
+        if new_pos_i128 < 0 || new_pos_i128 > usize::MAX as i128 {
+            return -2147467259; // E_FAIL
+        }
+        let new_pos = new_pos_i128 as u64;
 
         if !new_position.is_null() {
             write_unaligned(new_position, new_pos);

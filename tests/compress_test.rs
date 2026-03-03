@@ -476,7 +476,6 @@ fn test_bzip2_compression() {
 
 /// 测试 Tar 格式压缩
 #[test]
-#[ignore = "TAR 格式导致段错误"]
 fn test_tar_compression() {
     let lib_path = match get_library_path() {
         Some(path) => path,
@@ -681,7 +680,6 @@ fn test_password_api() {
 
 /// 测试档案读取器
 #[test]
-#[ignore = "段错误问题需要进一步调试 UpdateCallback FFI 实现"]
 fn test_archive_reader() {
     let lib_path = match get_library_path() {
         Some(path) => path,
@@ -758,7 +756,6 @@ fn test_archive_reader() {
 
 /// 测试从缓冲区解压
 #[test]
-#[ignore = "依赖外部 tar 命令"]
 fn test_buffer_extraction() {
     let lib_path = match get_library_path() {
         Some(path) => path,
