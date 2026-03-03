@@ -751,6 +751,14 @@ fn test_xz_extraction() {
 /// 
 /// Note: 暂时忽略，需要进一步调试 FFI 内存管理问题
 /// 问题：7-Zip 在解压完成后可能会释放回调对象，导致重复释放或访问已释放内存
+/// 
+/// 已尝试的修复：
+/// 1. 修复所有 COM 对象的 release() 方法，使其在 ref_count=0 时正确释放对象
+/// 2. 使用 Box::into_raw() 而不是 Box::leak() 创建对象
+/// 3. 确保 FileStreamWrite 等对象也正确管理内存
+/// 
+/// 但问题仍然存在，可能是因为 7-Zip 的引用计数行为与预期不同。
+/// 需要更深入地研究 7-Zip 源码来理解其 COM 对象管理方式。
 #[test]
 #[ignore = "需要进一步调试 FFI 内存管理问题"]
 fn test_buffer_extraction_zip() {
