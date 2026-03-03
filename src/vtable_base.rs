@@ -6,6 +6,8 @@
 //! - HRESULT constants
 //! - FFI conversion utilities
 
+#![allow(non_upper_case_globals)] // vtable crate uses lowercase field names like 'base'
+
 use vtable::*;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
