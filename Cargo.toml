@@ -15,6 +15,7 @@ thiserror = "1.0"
 libc = "0.2"
 vtable = { version = "0.3", optional = true }
 regex = "1.10"
+tempfile = "3.8"
 
 # Feature for using vtable crate based implementations
 [features]
