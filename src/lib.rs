@@ -36,6 +36,10 @@ pub mod compress_callback;
 pub mod output_archive;
 pub mod format_detect;
 pub mod archive_editor;
+pub mod mem_compressor;
+pub mod mem_extractor;
+pub mod stream_compressor;
+pub mod stream_extractor;
 
 #[cfg(feature = "vtable_impl")]
 pub mod vtable_callback;
@@ -61,6 +65,10 @@ pub use archive_reader::{BitArchiveReader, ArchiveItem, ArchiveProperties};
 pub use output_archive::{BitOutputArchive, UpdateMode, OverwriteMode};
 pub use format_detect::{detect_format_from_file, detect_format_from_extension};
 pub use archive_editor::{BitArchiveEditor, DeletePolicy};
+pub use mem_compressor::BitMemCompressor;
+pub use mem_extractor::BitMemExtractor;
+pub use stream_compressor::BitStreamCompressor;
+pub use stream_extractor::BitStreamExtractor;
 pub use callback::{TotalCallback, ProgressCallback, RatioCallback, FileCallback, PasswordCallback};
 
 #[cfg(test)]
