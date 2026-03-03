@@ -2,14 +2,17 @@
 
 use bit7z_rust::{BitLibrary, BitCompressor, CompressionFormat, CompressionLevel};
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== BitCompressor 测试 ===\n");
+    eprintln!("=== BitCompressor 测试 ===\n");
+    let _ = std::io::stderr().flush();
 
     // 加载 7-Zip 库
     let lib = BitLibrary::new(None::<&str>)?;
-    println!("✓ 7-Zip 库加载成功\n");
+    eprintln!("✓ 7-Zip 库加载成功\n");
+    let _ = std::io::stderr().flush();
 
     // 创建测试文件
     let test_dir = Path::new("test_compression");

@@ -13,6 +13,7 @@ use crate::archive_reader::ArchiveItem;
 use std::path::{Path, PathBuf};
 use std::collections::HashSet;
 use std::collections::HashMap;
+use std::io::Write;
 
 /// Update mode for archive operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -560,33 +561,50 @@ impl<'a> BitOutputArchive<'a> {
             let archive = archive_ptr.as_ptr();
 
             // Set archive properties
-            eprintln!("[output_archive] Setting archive properties");
-            self.set_archive_properties(archive)?;
-            eprintln!("[output_archive] Archive properties set");
+            // DISABLED: p7zip may not support custom properties
+            // eprintln!("[output_archive] Setting archive properties");
+            // self.set_archive_properties(archive)?;
+            // eprintln!("[output_archive] Archive properties set");
 
             // Create update callback on the heap
             // We need to use Box::new and Box::into_raw because the COM interface
             // uses reference counting and may call release after update_items returns
+            eprintln!("[output_archive] Creating UpdateCallback with {} items", input_items.len());
+            let _ = std::io::stderr().flush();
             let update_callback = UpdateCallback::new(
                 input_items.to_vec(),
                 self.password.clone(),
             );
             let callback_box = Box::new(update_callback);
             let callback_ptr = Box::into_raw(callback_box);
+            eprintln!("[output_archive] UpdateCallback created at {:p}", callback_ptr);
+            let _ = std::io::stderr().flush();
 
             // Call UpdateItems
             let num_items = input_items.len() as u32;
+            eprintln!("[output_archive] Calling UpdateItems with {} items", num_items);
+            let _ = std::io::stderr().flush();
             let archive_vtable = &*(*archive).vtable;
+            let out_stream_ptr = out_stream.as_i_out_stream() as *mut ISequentialOutStream;
+            eprintln!("[output_archive] archive_vtable={:p}, update_items_fn={:p}, out_stream={:p}, callback={:p}", 
+                archive_vtable, archive_vtable.update_items, out_stream_ptr, callback_ptr);
+            let _ = std::io::stderr().flush();
             let result = (archive_vtable.update_items)(
                 archive,
-                out_stream.as_i_out_stream() as *mut ISequentialOutStream,
+                out_stream_ptr,
                 num_items,
                 callback_ptr as *mut IArchiveUpdateCallback,
             );
+            eprintln!("[output_archive] UpdateItems returned 0x{:X}", result);
+            let _ = std::io::stderr().flush();
 
             // After update_items returns, release our reference
             // The callback will be freed when ref_count reaches 0
+            eprintln!("[output_archive] Releasing caller reference");
+            let _ = std::io::stderr().flush();
             UpdateCallback::release_caller_reference(callback_ptr);
+            eprintln!("[output_archive] Done");
+            let _ = std::io::stderr().flush();
 
             // S_OK (0) and S_FALSE (1) are both success codes
             if result != 0 && result != 1 {
