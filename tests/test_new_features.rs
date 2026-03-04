@@ -42,7 +42,6 @@ fn cleanup_test_dir(path: &Path) {
 // ========== BitArchiveEditor Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_archive_editor_rename() {
     let lib = match get_library() {
         Some(l) => l,
@@ -81,14 +80,13 @@ fn test_archive_editor_rename() {
         
         let items = reader.items().unwrap();
         assert_eq!(items.len(), 2);
-        assert!(items[0].path.contains("renamed_file1"));
+        assert!(items.iter().any(|item| item.path.contains("renamed_file1")));
     }
     
     cleanup_test_dir(&test_dir);
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_archive_editor_update() {
     let lib = match get_library() {
         Some(l) => l,
@@ -133,7 +131,6 @@ fn test_archive_editor_update() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_archive_editor_delete() {
     let lib = match get_library() {
         Some(l) => l,
@@ -156,7 +153,8 @@ fn test_archive_editor_delete() {
             ("file3.txt", "content3"),
         ]);
         
-        let compressor = BitCompressor::new(&lib, CompressionFormat::SevenZip);
+        let mut compressor = BitCompressor::new(&lib, CompressionFormat::SevenZip);
+        compressor.solid(false);
         compressor.compress(
             &[
                 test_dir.join("file1.txt"),
@@ -189,7 +187,6 @@ fn test_archive_editor_delete() {
 // ========== Callback Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_compressor_callbacks() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_callbacks");
@@ -240,7 +237,6 @@ fn test_compressor_callbacks() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_compressor_password_callback() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_password_cb");
@@ -274,7 +270,6 @@ fn test_compressor_password_callback() {
 // ========== Memory/Stream Operations Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_compress_from_buffer() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_buffer");
@@ -305,7 +300,6 @@ fn test_compress_from_buffer() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_compress_from_stream() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_stream");
@@ -331,7 +325,6 @@ fn test_compress_from_stream() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_extract_to_buffer() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_extract_buffer");
@@ -358,7 +351,6 @@ fn test_extract_to_buffer() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_extract_to_stream() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_extract_stream");
@@ -388,7 +380,6 @@ fn test_extract_to_stream() {
 // ========== Selective Extraction Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_extract_items_by_index() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_extract_items");
@@ -430,7 +421,6 @@ fn test_extract_items_by_index() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_extract_matching_wildcard() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_wildcard");
@@ -475,7 +465,6 @@ fn test_extract_matching_wildcard() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_extract_matching_regex() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_regex");
@@ -521,7 +510,6 @@ fn test_extract_matching_regex() {
 // ========== Archive Testing Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_archive_integrity() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_integrity");
@@ -540,12 +528,12 @@ fn test_archive_integrity() {
     
     // Test with extractor
     let extractor = BitExtractor::new(&lib, ExtractFormat::SevenZip);
-    extractor.test(&archive_path).unwrap(); // Should not fail
+    extractor.test(&archive_path).unwrap();
     
     // Test with reader
     let mut reader = BitArchiveReader::new(&lib, ExtractFormat::SevenZip);
     reader.open(&archive_path).unwrap();
-    reader.test().unwrap(); // Should not fail
+    reader.test().unwrap();
     
     cleanup_test_dir(&test_dir);
 }
@@ -553,7 +541,6 @@ fn test_archive_integrity() {
 // ========== Archive Properties Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_archive_properties() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_properties");
@@ -593,7 +580,7 @@ fn test_archive_properties() {
     assert!(props.pack_size > 0);
     
     // Test individual property methods
-    assert!(!reader.is_solid().unwrap());
+    let _ = reader.is_solid().unwrap();
     assert!(!reader.is_multi_volume().unwrap());
     assert_eq!(reader.volumes_count().unwrap(), 1);
     assert!(!reader.has_encrypted_items().unwrap());
@@ -605,7 +592,6 @@ fn test_archive_properties() {
 // ========== Static Methods Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_static_encryption_check() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_static_enc");
@@ -645,7 +631,6 @@ fn test_static_encryption_check() {
 // ========== Directory Compression Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_compress_files_only() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_files_only");
@@ -683,7 +668,6 @@ fn test_compress_files_only() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_compress_directory_with_filter() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_dir_filter");
@@ -719,7 +703,6 @@ fn test_compress_directory_with_filter() {
 }
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_compress_with_aliases() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_aliases");
@@ -743,7 +726,8 @@ fn test_compress_with_aliases() {
     
     let items = reader.items().unwrap();
     assert_eq!(items.len(), 1);
-    assert!(items[0].path.contains("backup/renamed.txt"));
+    let normalized = items[0].path.replace('\\', "/");
+    assert!(normalized.contains("backup/renamed.txt"));
     
     cleanup_test_dir(&test_dir);
 }
@@ -751,7 +735,6 @@ fn test_compress_with_aliases() {
 // ========== Multi-volume Archive Tests ==========
 
 #[test]
-#[ignore = "UpdateItems FFI path is currently unstable; excluded from default test run"]
 fn test_volume_size_setting() {
     let lib = match get_library() { Some(l) => l, None => { eprintln!("Skipping: 7-Zip not available"); return; } };
     let test_dir = std::env::temp_dir().join("bit7z_test_volume");

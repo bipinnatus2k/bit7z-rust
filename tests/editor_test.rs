@@ -18,11 +18,7 @@ fn test_archive_editor_creation() {
     // 清理任何现有的测试文件
     let _ = fs::remove_file(test_archive);
     
-    // 这里我们只是测试结构体的创建，因为我们还没有真实的档案
-    // 实际的测试需要真实的档案文件
-    
-    // 确保编译通过
-    assert!(Path::new(test_archive).exists() || true);
+    assert!(!Path::new(test_archive).exists());
 }
 
 #[test]
@@ -40,7 +36,5 @@ fn test_editor_struct_fields() {
     // 测试编辑器结构体的基本字段
     let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     
-    // 我们不能真正创建编辑器，因为需要一个真实档案
-    // 但我们可以测试导入和基本类型
-    assert!(true); // 确保编译通过
+    let _ = lib;
 }

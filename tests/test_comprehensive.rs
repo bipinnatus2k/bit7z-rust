@@ -254,7 +254,6 @@ fn cleanup_output_files(patterns: &[&str]) {
 // ============================================================================
 
 #[test]
-#[ignore = "OutputArchive/UpdateItems 在当前 FFI 实现下返回不稳定，需后续修复"]
 fn test_output_archive_basic_compression() {
     use bit7z_rust::ExtractFormat;
 
@@ -287,10 +286,6 @@ fn test_output_archive_basic_compression() {
         eprintln!("Output file does not exist");
     }
 
-    // Cleanup
-    cleanup_test_files(prefix);
-    cleanup_output_files(&["test_basic.7z"]);
-
     assert!(result.is_ok(), "Basic compression should succeed: {:?}", result);
     assert!(output_exists, "Output file should exist");
 
@@ -298,10 +293,13 @@ fn test_output_archive_basic_compression() {
         let metadata = fs::metadata(&output_path).unwrap();
         assert!(metadata.len() > 0, "Output file should not be empty");
     }
+
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_basic.7z"]);
 }
 
 #[test]
-#[ignore = "OutputArchive/UpdateItems 在当前 FFI 实现下返回不稳定，需后续修复"]
 fn test_output_archive_buffer_compression() {
     let prefix = "buffer";
     let files = match create_test_files(prefix) {
@@ -385,7 +383,6 @@ fn test_output_archive_custom_names() {
 }
 
 #[test]
-#[ignore = "OutputArchive/UpdateItems 在当前 FFI 实现下返回不稳定，需后续修复"]
 fn test_output_archive_directory() {
     let prefix = "dir";
     let (dir_path, _files) = match create_test_directory(prefix) {
@@ -397,6 +394,7 @@ fn test_output_archive_directory() {
     };
 
     let output_path = std::env::temp_dir().join("test_directory.7z");
+    let _ = fs::remove_file(&output_path);
 
     let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
     let add_result = archive.add_directory(&dir_path);
@@ -451,7 +449,6 @@ fn test_overwrite_mode_none() {
 }
 
 #[test]
-#[ignore = "OutputArchive/UpdateItems 在当前 FFI 实现下返回不稳定，需后续修复"]
 fn test_overwrite_mode_overwrite() {
     let prefix = "ow_overwrite";
     let files = match create_test_files(prefix) {
@@ -463,6 +460,7 @@ fn test_overwrite_mode_overwrite() {
     };
 
     let output_path = std::env::temp_dir().join("test_ow_overwrite.7z");
+    let _ = fs::remove_file(&output_path);
 
     // First compression
     let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
@@ -486,7 +484,6 @@ fn test_overwrite_mode_overwrite() {
 }
 
 #[test]
-#[ignore = "OutputArchive/UpdateItems 在当前 FFI 实现下返回不稳定，需后续修复"]
 fn test_overwrite_mode_skip() {
     let prefix = "ow_skip";
     let files = match create_test_files(prefix) {
@@ -498,6 +495,7 @@ fn test_overwrite_mode_skip() {
     };
 
     let output_path = std::env::temp_dir().join("test_ow_skip.7z");
+    let _ = fs::remove_file(&output_path);
 
     // First compression
     let mut archive = BitOutputArchive::new(CompressionFormat::SevenZip);
@@ -759,7 +757,6 @@ fn test_format_detection_case_insensitive() {
 // ============================================================================
 
 #[test]
-#[ignore = "OutputArchive/UpdateItems 在当前 FFI 实现下返回不稳定，需后续修复"]
 fn test_update_mode_none() {
     let prefix = "update_none";
     let files = match create_test_files(prefix) {
@@ -790,7 +787,6 @@ fn test_update_mode_none() {
 // ============================================================================
 
 #[test]
-#[ignore = "OutputArchive/UpdateItems 在当前 FFI 实现下返回不稳定，需后续修复"]
 fn test_compress_multiple_files() {
     let prefix = "multi";
     let files = match create_test_files(prefix) {
@@ -810,14 +806,14 @@ fn test_compress_multiple_files() {
 
     let result = archive.compress_to(&output_path);
 
-    // Cleanup
-    cleanup_test_files(prefix);
-    cleanup_output_files(&["test_multi.7z"]);
-
     assert!(result.is_ok(), "Multiple files compression should succeed: {:?}", result);
 
     let metadata = fs::metadata(&output_path).unwrap();
     assert!(metadata.len() > 0, "Output file should not be empty");
+
+    // Cleanup
+    cleanup_test_files(prefix);
+    cleanup_output_files(&["test_multi.7z"]);
 }
 
 #[test]

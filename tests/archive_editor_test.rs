@@ -18,9 +18,7 @@ fn test_archive_editor_creation() {
     // Clean up any existing test file
     let _ = fs::remove_file(test_archive);
     
-    // For now, we'll just test that the struct can be created
-    // Actual functionality will be tested with a real archive
-    assert!(Path::new(test_archive).exists() || true); // Just checking compilation
+    assert!(!Path::new(test_archive).exists());
 }
 
 #[test]

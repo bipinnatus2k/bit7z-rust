@@ -398,26 +398,17 @@ fn test_gzip_compression() {
     
     let output_path = temp_dir.path().join("output.gz");
     
-    // 使用系统 gzip 命令创建测试档案
-    let gzip_result = std::process::Command::new("bash")
-        .arg("-c")
-        .arg(format!("gzip -c {} > {}", file_path.display(), output_path.display()))
-        .output();
+    let compressor = BitCompressor::new(&lib, CompressionFormat::GZip);
+    let input_paths = [file_path];
+    let result = compressor.compress(&input_paths, &output_path);
+    assert!(result.is_ok(), "GZip 文件创建失败：{:?}", result.err());
+    assert!(output_path.exists(), "GZip 文件创建失败");
     
-    match gzip_result {
-        Ok(output) if output.status.success() => {
-            assert!(output_path.exists(), "GZip 文件创建失败");
-            
-            // 验证解压
-            let extract_dir = temp_dir.path().join("extracted");
-            let extractor = BitExtractor::new(&lib, ExtractFormat::GZip);
-            let extract_result = extractor.extract(&output_path, &extract_dir);
-            assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
-        }
-        _ => {
-            eprintln!("跳过测试：gzip 命令不可用");
-        }
-    }
+    // 验证解压
+    let extract_dir = temp_dir.path().join("extracted");
+    let extractor = BitExtractor::new(&lib, ExtractFormat::GZip);
+    let extract_result = extractor.extract(&output_path, &extract_dir);
+    assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
 }
 
 /// 测试 BZip2 格式压缩
@@ -447,26 +438,17 @@ fn test_bzip2_compression() {
     
     let output_path = temp_dir.path().join("output.bz2");
     
-    // 使用系统 bzip2 命令创建测试档案
-    let bzip2_result = std::process::Command::new("bash")
-        .arg("-c")
-        .arg(format!("bzip2 -c {} > {}", file_path.display(), output_path.display()))
-        .output();
+    let compressor = BitCompressor::new(&lib, CompressionFormat::BZip2);
+    let input_paths = [file_path];
+    let result = compressor.compress(&input_paths, &output_path);
+    assert!(result.is_ok(), "BZip2 文件创建失败：{:?}", result.err());
+    assert!(output_path.exists(), "BZip2 文件创建失败");
     
-    match bzip2_result {
-        Ok(output) if output.status.success() => {
-            assert!(output_path.exists(), "BZip2 文件创建失败");
-            
-            // 验证解压
-            let extract_dir = temp_dir.path().join("extracted");
-            let extractor = BitExtractor::new(&lib, ExtractFormat::BZip2);
-            let extract_result = extractor.extract(&output_path, &extract_dir);
-            assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
-        }
-        _ => {
-            eprintln!("跳过测试：bzip2 命令不可用");
-        }
-    }
+    // 验证解压
+    let extract_dir = temp_dir.path().join("extracted");
+    let extractor = BitExtractor::new(&lib, ExtractFormat::BZip2);
+    let extract_result = extractor.extract(&output_path, &extract_dir);
+    assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
 }
 
 /// 测试 Tar 格式压缩
@@ -489,37 +471,24 @@ fn test_tar_compression() {
     };
 
     let temp_dir = TempDir::new().expect("创建临时目录失败");
-    let _files = create_test_files(temp_dir.path()).expect("创建测试文件失败");
+    let files = create_test_files(temp_dir.path()).expect("创建测试文件失败");
 
     let output_path = temp_dir.path().join("output.tar");
     
-    // 使用系统 tar 命令创建测试档案
-    let tar_result = std::process::Command::new("tar")
-        .arg("-cf")
-        .arg(&output_path)
-        .arg("-C")
-        .arg(temp_dir.path())
-        .arg("test1.txt")
-        .arg("test2.txt")
-        .arg("data.json")
-        .arg("subdir")
-        .arg("binary.bin")
-        .output();
+    let compressor = BitCompressor::new(&lib, CompressionFormat::Tar);
+    let input_paths: Vec<std::path::PathBuf> = files
+        .iter()
+        .map(|file| std::path::PathBuf::from(&file.path))
+        .collect();
+    let result = compressor.compress(&input_paths, &output_path);
+    assert!(result.is_ok(), "TAR 文件创建失败：{:?}", result.err());
+    assert!(output_path.exists(), "TAR 文件创建失败");
     
-    match tar_result {
-        Ok(output) if output.status.success() => {
-            assert!(output_path.exists(), "TAR 文件创建失败");
-            
-            // 验证解压
-            let extract_dir = temp_dir.path().join("extracted");
-            let extractor = BitExtractor::new(&lib, ExtractFormat::Tar);
-            let extract_result = extractor.extract(&output_path, &extract_dir);
-            assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
-        }
-        _ => {
-            eprintln!("跳过测试：tar 命令不可用");
-        }
-    }
+    // 验证解压
+    let extract_dir = temp_dir.path().join("extracted");
+    let extractor = BitExtractor::new(&lib, ExtractFormat::Tar);
+    let extract_result = extractor.extract(&output_path, &extract_dir);
+    assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
 }
 
 /// 测试 Xz 格式压缩
@@ -549,26 +518,17 @@ fn test_xz_compression() {
     
     let output_path = temp_dir.path().join("output.xz");
     
-    // 使用系统 xz 命令创建测试档案
-    let xz_result = std::process::Command::new("bash")
-        .arg("-c")
-        .arg(format!("xz -c {} > {}", file_path.display(), output_path.display()))
-        .output();
+    let compressor = BitCompressor::new(&lib, CompressionFormat::Xz);
+    let input_paths = [file_path];
+    let result = compressor.compress(&input_paths, &output_path);
+    assert!(result.is_ok(), "Xz 文件创建失败：{:?}", result.err());
+    assert!(output_path.exists(), "Xz 文件创建失败");
     
-    match xz_result {
-        Ok(output) if output.status.success() => {
-            assert!(output_path.exists(), "Xz 文件创建失败");
-            
-            // 验证解压
-            let extract_dir = temp_dir.path().join("extracted");
-            let extractor = BitExtractor::new(&lib, ExtractFormat::Xz);
-            let extract_result = extractor.extract(&output_path, &extract_dir);
-            assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
-        }
-        _ => {
-            eprintln!("跳过测试：xz 命令不可用");
-        }
-    }
+    // 验证解压
+    let extract_dir = temp_dir.path().join("extracted");
+    let extractor = BitExtractor::new(&lib, ExtractFormat::Xz);
+    let extract_result = extractor.extract(&output_path, &extract_dir);
+    assert!(extract_result.is_ok(), "解压失败：{:?}", extract_result.err());
 }
 
 /// 测试压缩级别设置
@@ -776,34 +736,23 @@ fn test_buffer_extraction() {
     
     let archive_path = temp_dir.path().join("test.tar");
     
-    // 使用系统 tar 命令创建测试档案
-    let tar_result = std::process::Command::new("tar")
-        .arg("-cf")
-        .arg(&archive_path)
-        .arg("-C")
-        .arg(temp_dir.path())
-        .arg("test.txt")
-        .output();
+    let compressor = BitCompressor::new(&lib, CompressionFormat::Tar);
+    let input_paths = [file_path];
+    let result = compressor.compress(&input_paths, &archive_path);
+    assert!(result.is_ok(), "TAR 文件创建失败：{:?}", result.err());
     
-    match tar_result {
-        Ok(output) if output.status.success() => {
-            // 读取档案到内存
-            let buffer = fs::read(&archive_path).expect("读取档案失败");
-            assert!(buffer.len() > 0, "缓冲区应为非空");
-            
-            // 测试从缓冲区解压
-            let extractor = BitExtractor::new(&lib, ExtractFormat::Tar);
-            let extract_dir = temp_dir.path().join("extracted");
-            let extract_result = extractor.extract_from_buffer(buffer, &extract_dir);
-            
-            assert!(extract_result.is_ok(), "从缓冲区解压失败：{:?}", extract_result.err());
-            
-            println!("缓冲区解压测试通过");
-        }
-        _ => {
-            eprintln!("跳过测试：tar 命令不可用");
-        }
-    }
+    // 读取档案到内存
+    let buffer = fs::read(&archive_path).expect("读取档案失败");
+    assert!(!buffer.is_empty(), "缓冲区应为非空");
+    
+    // 测试从缓冲区解压
+    let extractor = BitExtractor::new(&lib, ExtractFormat::Tar);
+    let extract_dir = temp_dir.path().join("extracted");
+    let extract_result = extractor.extract_from_buffer(buffer, &extract_dir);
+    
+    assert!(extract_result.is_ok(), "从缓冲区解压失败：{:?}", extract_result.err());
+    
+    println!("缓冲区解压测试通过");
 }
 
 /// 测试 Wim 格式

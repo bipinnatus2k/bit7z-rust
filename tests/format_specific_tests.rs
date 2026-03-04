@@ -81,7 +81,6 @@ fn verify_archive_content(
 
 /// 测试单文件格式（GZip、BZip2 等）
 #[test]
-#[ignore = "UpdateCallback/格式处理在当前 FFI 实现下仍不稳定，需后续专项修复"]
 fn test_single_file_formats() {
     let _guard = ffi_test_guard();
     let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
@@ -117,7 +116,6 @@ fn test_single_file_formats() {
 
 /// 测试 TAR 格式
 #[test]
-#[ignore = "UpdateCallback/格式处理在当前 FFI 实现下仍不稳定，需后续专项修复"]
 fn test_tar_format() {
     let _guard = ffi_test_guard();
     let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
@@ -156,7 +154,6 @@ fn test_tar_format() {
 
 /// 测试 ZIP 格式的特定行为
 #[test]
-#[ignore = "UpdateCallback/格式处理在当前 FFI 实现下仍不稳定，需后续专项修复"]
 fn test_zip_format_specific() {
     let _guard = ffi_test_guard();
     let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
@@ -195,7 +192,6 @@ fn test_zip_format_specific() {
 
 /// 测试 7z 格式的特定行为
 #[test]
-#[ignore = "UpdateCallback/格式处理在当前 FFI 实现下仍不稳定，需后续专项修复"]
 fn test_7z_format_specific() {
     let _guard = ffi_test_guard();
     let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库

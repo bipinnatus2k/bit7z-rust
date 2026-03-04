@@ -14,7 +14,6 @@ use test_utils::find_library_path;
 
 /// 测试不同压缩级别的性能
 #[test]
-#[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，性能压测暂不纳入默认测试"]
 fn test_compression_level_performance() {
     let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
@@ -59,7 +58,6 @@ fn test_compression_level_performance() {
 
 /// 测试不同格式的压缩性能
 #[test]
-#[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，性能压测暂不纳入默认测试"]
 fn test_format_performance() {
     let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
     let temp_dir = TempDir::new().unwrap();
@@ -97,7 +95,6 @@ fn test_format_performance() {
 
 /// 测试内存操作性能
 #[test]
-#[ignore = "BitMemCompressor/Extractor 在当前 FFI 实现下不稳定，性能压测暂不纳入默认测试"]
 fn test_memory_operation_performance() {
     let lib = BitLibrary::new::<String>(find_library_path().into()).unwrap(); // 使用字符串路径初始化库
 
