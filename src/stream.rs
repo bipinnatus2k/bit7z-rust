@@ -286,8 +286,6 @@ impl FileStreamWrite {
         } else {
             // Reference count reached 0, free the object
             *ref_count.get() = 0;
-            // Drop the stream - this will also drop the Pin<Box<>> vtable and close the file
-            let _ = Box::from_raw(stream);
             0
         }
     }

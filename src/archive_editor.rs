@@ -7,8 +7,9 @@ use crate::ffi::BitLibrary;
 use crate::format::CompressionFormat;
 use crate::error::{Bit7zError, Result};
 use crate::archive_reader::BitArchiveReader;
+use crate::compressor::BitCompressor;
+use crate::extractor::BitExtractor;
 use crate::compress_callback::InputItem;
-use crate::output_archive::BitOutputArchive;
 use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
 
@@ -313,84 +314,69 @@ impl<'a> BitArchiveEditor<'a> {
     pub fn apply_changes(&mut self) -> Result<()> {
         // Create a temporary file path for the new archive
         let temp_path = std::env::temp_dir().join(format!(
-            "bit7z_archive_{}.tmp",
-            std::process::id()
+            "bit7z_archive_{}_{}.tmp",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?
+                .as_millis()
         ));
         
         self.temp_archive_path = Some(temp_path.clone());
 
-        // Load existing archive items
-        let reader = BitArchiveReader::new(self.library, self.format.into());
-        let mut reader_owned = reader;
-        reader_owned.open(&self.source_archive)?;
-        
-        let existing_items = reader_owned.items()?;
-        
-        // Build output archive using BitOutputArchive
-        let mut output_archive = BitOutputArchive::from_archive(
-            self.format,
-            &self.source_archive
-        );
-        
-        // Apply compression settings
-        output_archive
+        let work_dir = std::env::temp_dir().join(format!(
+            "bit7z_edit_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?
+                .as_millis()
+        ));
+        if work_dir.exists() {
+            std::fs::remove_dir_all(&work_dir).map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+        }
+        std::fs::create_dir_all(&work_dir)
+            .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+
+        let mut reader = BitArchiveReader::new(self.library, self.format.into());
+        reader.open(&self.source_archive)?;
+        let existing_items = reader.items()?;
+
+        let extractor = BitExtractor::new(self.library, self.format.into());
+        extractor.extract(&self.source_archive, &work_dir)?;
+
+        self.apply_changes_to_dir(&work_dir, &existing_items)?;
+
+        let mut compressor = BitCompressor::new(self.library, self.format);
+        compressor
             .compression_level(self.compression_level)
             .solid(self.solid);
-        
+
         if let Some(method) = self.compression_method {
-            output_archive.compression_method(method);
+            compressor.compression_method(method);
         }
-        
+
         if let Some(size) = self.dictionary_size {
-            output_archive.dictionary_size(size);
+            compressor.dictionary_size(size);
         }
-        
+
         if let Some(size) = self.word_size {
-            output_archive.word_size(size);
+            compressor.word_size(size);
         }
-        
+
         if let Some(ref password) = self.password {
-            output_archive.password(password.clone());
+            compressor.password(password.clone());
         }
 
-        // Process existing items, applying edits and deletions
-        for item in &existing_items {
-            if self.deleted_indices.contains(&item.index) {
-                continue; // Skip deleted items
-            }
-
-            // Check if item is being updated
-            if self.edited_items.contains_key(&item.index) {
-                // Add updated item - handled below
-            } else if self.renamed_items.contains_key(&item.index) {
-                // For renamed items, we need to extract and re-add with new name
-                // This is a simplified approach - full implementation needs temp extraction
-                output_archive.delete_item(item.index);
-            } else {
-                // Keep existing item
-                // For now, we'll just mark it to be kept
-                // In a real implementation, we would copy the item from the original archive
-                // This is a simplification for demonstration purposes
-            }
-        }
-
-        // Add new/updated items
-        for (index, input_item) in &self.edited_items {
-            if let Some(new_path) = self.renamed_items.get(index) {
-                output_archive.add_file_with_name(&input_item.path, new_path.clone());
-            } else {
-                output_archive.add_file(&input_item.path);
-            }
-        }
-
-        // Compress to temporary file
-        output_archive.compress_to(&temp_path)?;
+        let files_with_aliases = self.collect_files_with_aliases(&work_dir)?;
+        compressor.compress_with_aliases(&files_with_aliases, temp_path.clone())?;
 
         // Replace original archive with temporary archive
         std::fs::rename(&temp_path, &self.source_archive)
             .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
         
         self.temp_archive_path = None;
+        let _ = std::fs::remove_dir_all(&work_dir);
 
         Ok(())
     }
@@ -406,65 +392,60 @@ impl<'a> BitArchiveEditor<'a> {
     pub fn apply_changes_to_buffer(&mut self) -> Result<Vec<u8>> {
         // Create a temporary file path for the new archive
         let temp_path = std::env::temp_dir().join(format!(
-            "bit7z_archive_buffer_{}.tmp",
-            std::process::id()
+            "bit7z_archive_buffer_{}_{}.tmp",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?
+                .as_millis()
         ));
         
-        // Load existing archive items
-        let reader = BitArchiveReader::new(self.library, self.format.into());
-        let mut reader_owned = reader;
-        reader_owned.open(&self.source_archive)?;
-        
-        let existing_items = reader_owned.items()?;
-        
-        // Build output archive using BitOutputArchive
-        let mut output_archive = BitOutputArchive::from_archive(
-            self.format,
-            &self.source_archive
-        );
-        
-        // Apply compression settings
-        output_archive
+        let work_dir = std::env::temp_dir().join(format!(
+            "bit7z_edit_buffer_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?
+                .as_millis()
+        ));
+        if work_dir.exists() {
+            std::fs::remove_dir_all(&work_dir).map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+        }
+        std::fs::create_dir_all(&work_dir)
+            .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+
+        let mut reader = BitArchiveReader::new(self.library, self.format.into());
+        reader.open(&self.source_archive)?;
+        let existing_items = reader.items()?;
+
+        let extractor = BitExtractor::new(self.library, self.format.into());
+        extractor.extract(&self.source_archive, &work_dir)?;
+
+        self.apply_changes_to_dir(&work_dir, &existing_items)?;
+
+        let mut compressor = BitCompressor::new(self.library, self.format);
+        compressor
             .compression_level(self.compression_level)
             .solid(self.solid);
-        
+
         if let Some(method) = self.compression_method {
-            output_archive.compression_method(method);
+            compressor.compression_method(method);
         }
-        
+
         if let Some(size) = self.dictionary_size {
-            output_archive.dictionary_size(size);
+            compressor.dictionary_size(size);
         }
-        
+
         if let Some(size) = self.word_size {
-            output_archive.word_size(size);
+            compressor.word_size(size);
         }
-        
+
         if let Some(ref password) = self.password {
-            output_archive.password(password.clone());
+            compressor.password(password.clone());
         }
 
-        // Process existing items, applying edits and deletions
-        for item in &existing_items {
-            if self.deleted_indices.contains(&item.index) {
-                continue; // Skip deleted items
-            }
-
-            // Keep existing items (for simplicity, we're not actually copying them)
-            // In a real implementation, we would copy the item from the original archive
-        }
-
-        // Add new/updated items
-        for (index, input_item) in &self.edited_items {
-            if let Some(new_path) = self.renamed_items.get(index) {
-                output_archive.add_file_with_name(&input_item.path, new_path.clone());
-            } else {
-                output_archive.add_file(&input_item.path);
-            }
-        }
-
-        // Compress to temporary file
-        output_archive.compress_to(&temp_path)?;
+        let files_with_aliases = self.collect_files_with_aliases(&work_dir)?;
+        compressor.compress_with_aliases(&files_with_aliases, temp_path.clone())?;
 
         // Read the compressed data
         let buffer = std::fs::read(&temp_path)
@@ -472,8 +453,112 @@ impl<'a> BitArchiveEditor<'a> {
 
         // Clean up temp file
         let _ = std::fs::remove_file(&temp_path);
+        let _ = std::fs::remove_dir_all(&work_dir);
 
         Ok(buffer)
+    }
+
+    fn apply_changes_to_dir(
+        &self,
+        work_dir: &Path,
+        items: &[crate::archive_reader::ArchiveItem],
+    ) -> Result<()> {
+        let mut index_to_path = HashMap::new();
+        for item in items {
+            index_to_path.insert(item.index, item.path.clone());
+        }
+
+        for index in &self.deleted_indices {
+            if let Some(path) = index_to_path.get(index) {
+                let target = work_dir.join(path);
+                if target.is_dir() {
+                    let _ = std::fs::remove_dir_all(&target);
+                } else {
+                    let _ = std::fs::remove_file(&target);
+                }
+            }
+        }
+
+        for (index, new_path) in &self.renamed_items {
+            if let Some(old_path) = index_to_path.get(index) {
+                let from = work_dir.join(old_path);
+                let to = work_dir.join(new_path);
+                if from.exists() {
+                    if let Some(parent) = to.parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+                    }
+                    std::fs::rename(&from, &to)
+                        .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+                }
+            }
+        }
+
+        for (index, input_item) in &self.edited_items {
+            let target_rel = if let Some(rename) = self.renamed_items.get(index) {
+                rename.clone()
+            } else if let Some(ref name) = input_item.name_in_archive {
+                name.clone()
+            } else {
+                index_to_path
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        input_item
+                            .path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    })
+            };
+
+            let target_path = work_dir.join(&target_rel);
+            if let Some(parent) = target_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+            }
+            std::fs::copy(&input_item.path, &target_path)
+                .map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+
+            if let Some(old_path) = index_to_path.get(index) {
+                if old_path != &target_rel {
+                    let old = work_dir.join(old_path);
+                    let _ = std::fs::remove_file(&old);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn collect_files_with_aliases(
+        &self,
+        root: &Path,
+    ) -> Result<Vec<(PathBuf, String)>> {
+        let mut files = Vec::new();
+        self.collect_files_recursive(root, root, &mut files)?;
+        Ok(files)
+    }
+
+    fn collect_files_recursive(
+        &self,
+        root: &Path,
+        current: &Path,
+        files: &mut Vec<(PathBuf, String)>,
+    ) -> Result<()> {
+        for entry in std::fs::read_dir(current)
+            .map_err(|e| Bit7zError::CompressFailed(e.to_string()))? {
+            let entry = entry.map_err(|e| Bit7zError::CompressFailed(e.to_string()))?;
+            let path = entry.path();
+            if path.is_dir() {
+                self.collect_files_recursive(root, &path, files)?;
+            } else if path.is_file() {
+                let relative = path.strip_prefix(root).unwrap_or(&path);
+                let alias = relative.to_string_lossy().replace('\\', "/");
+                files.push((path, alias));
+            }
+        }
+        Ok(())
     }
 
     /// Validate an item index

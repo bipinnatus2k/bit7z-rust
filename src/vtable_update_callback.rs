@@ -15,6 +15,7 @@ use crate::ffi::{
     IID_ICryptoGetTextPassword, IID_ICryptoGetTextPassword2,
 };
 use crate::stream::FileStream;
+use crate::ffi::variant::alloc_bstr;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -39,7 +40,7 @@ struct UpdateCallbackVTable {
 
     // IArchiveUpdateCallback methods
     get_update_item_info: fn(VRef<UpdateCallbackVTable>, u32, *mut i32, *mut i32, *mut u32) -> HRESULT,
-    get_property: fn(VRef<UpdateCallbackVTable>, u32, PROPID, *mut PROPVARIANT) -> HRESULT,
+    get_property: fn(VRef<UpdateCallbackVTable>, u32, u32, *mut PROPVARIANT) -> HRESULT,
     get_stream: fn(VRef<UpdateCallbackVTable>, u32, *mut *mut ISequentialInStream) -> HRESULT,
     set_operation_result: fn(VRef<UpdateCallbackVTable>, i32) -> HRESULT,
 
@@ -241,7 +242,7 @@ impl UpdateCallback for VTableUpdateCallback {
         S_OK
     }
 
-    fn get_property(&self, index: u32, prop_id: PROPID, value: *mut PROPVARIANT) -> HRESULT {
+    fn get_property(&self, index: u32, prop_id: u32, value: *mut PROPVARIANT) -> HRESULT {
         if value.is_null() {
             return E_POINTER;
         }
@@ -253,7 +254,7 @@ impl UpdateCallback for VTableUpdateCallback {
 
         unsafe {
             // kpidPath
-            if prop_id == crate::ffi::PROPID::Path {
+            if prop_id == crate::ffi::PROPID::Path as u32 {
                 let path_str = item.path.to_string_lossy();
                 let utf16: Vec<u16> = path_str.encode_utf16().collect();
                 let bstr = alloc_bstr(&utf16);
@@ -269,7 +270,7 @@ impl UpdateCallback for VTableUpdateCallback {
             }
 
             // kpidIsDir
-            if prop_id == crate::ffi::PROPID::IsDir {
+            if prop_id == crate::ffi::PROPID::IsDir as u32 {
                 let is_dir = item.path.is_dir();
                 (*value).vt = 11; // VT_BOOL
                 (*value).wReserved1 = 0;
@@ -376,33 +377,3 @@ impl UpdateCallback for VTableUpdateCallback {
 
 UpdateCallbackVTable_static!(static UPDATE_CALLBACK_VT for VTableUpdateCallback);
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Allocate BSTR from UTF-16 slice
-fn alloc_bstr(utf16: &[u16]) -> *mut u16 {
-    use std::alloc::{alloc, Layout};
-    use std::ptr;
-
-    if utf16.is_empty() {
-        return ptr::null_mut();
-    }
-
-    let len = utf16.len();
-    let total_bytes = 4 + len * 2 + 2;
-    let layout = Layout::from_size_align(total_bytes, 4).unwrap();
-
-    unsafe {
-        let ptr = alloc(layout);
-        if ptr.is_null() {
-            return ptr::null_mut();
-        }
-
-        *(ptr as *mut u32) = (len * 2) as u32;
-        ptr::copy_nonoverlapping(utf16.as_ptr(), ptr.add(4) as *mut u16, len);
-        *(ptr.add(4 + len * 2) as *mut u16) = 0;
-
-        ptr.add(4) as *mut u16
-    }
-}

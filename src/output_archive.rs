@@ -590,6 +590,7 @@ impl<'a> BitOutputArchive<'a> {
             eprintln!("[output_archive] archive_vtable={:p}, update_items_fn={:p}, out_stream={:p}, callback={:p}, callback_iface={:p}", 
                 archive_vtable, archive_vtable.update_items, out_stream_ptr, callback_ptr, callback_iface_ptr);
             let _ = std::io::stderr().flush();
+            UpdateCallback::add_ref_for_callee(callback_ptr);
             let result = (archive_vtable.update_items)(
                 archive,
                 out_stream_ptr,
@@ -606,6 +607,7 @@ impl<'a> BitOutputArchive<'a> {
             UpdateCallback::release_caller_reference(callback_ptr);
             eprintln!("[output_archive] Done");
             let _ = std::io::stderr().flush();
+            let _ = (archive_vtable.base.release)(archive as *mut crate::ffi::IUnknown);
 
             // Match bit7z behavior: UpdateItems must return S_OK.
             if result != 0 {

@@ -18,7 +18,7 @@ use crate::ffi::{
     propvariant_to_filetime,
 };
 use crate::callback::OpenCallback;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct ArchiveItem {
     /// Item index in the archive
@@ -50,6 +50,7 @@ pub struct BitArchiveReader<'a> {
     library: &'a BitLibrary,
     format: ExtractFormat,
     archive: Option<*mut IInArchive>,
+    archive_path: Option<PathBuf>,
     // Store leaked pointers for proper cleanup in Drop
     _in_stream: Option<*mut crate::stream::FileStream>,
     _open_callback: Option<*mut OpenCallback>,
@@ -62,6 +63,7 @@ impl<'a> BitArchiveReader<'a> {
             library,
             format,
             archive: None,
+            archive_path: None,
             _in_stream: None,
             _open_callback: None,
         }
@@ -145,6 +147,7 @@ impl<'a> BitArchiveReader<'a> {
             self.archive = Some(archive_ptr.as_ptr());
             self._in_stream = Some(in_stream_ptr);
             self._open_callback = Some(open_callback_ptr);
+            self.archive_path = Some(archive_path.as_ref().to_path_buf());
             Ok(())
         }
     }
@@ -389,7 +392,7 @@ impl<'a> BitArchiveReader<'a> {
                 kpidSize,
                 &mut prop,
             );
-            let total_size = if result == 0 {
+            let mut total_size = if result == 0 {
                 propvariant_to_u64(&prop)
             } else {
                 0
@@ -402,12 +405,31 @@ impl<'a> BitArchiveReader<'a> {
                 kpidPackSize,
                 &mut prop,
             );
-            let pack_size = if result == 0 {
+            let mut pack_size = if result == 0 {
                 propvariant_to_u64(&prop)
             } else {
                 0
             };
             prop.clear();
+            if total_size == 0 && pack_size > 0 {
+                total_size = pack_size;
+            }
+            if total_size == 0 && pack_size == 0 {
+                if let Some(ref path) = self.archive_path {
+                    if let Ok(metadata) = std::fs::metadata(path) {
+                        total_size = metadata.len();
+                    }
+                }
+            }
+            if pack_size == 0 {
+                if total_size > 0 {
+                    pack_size = total_size;
+                } else if let Some(ref path) = self.archive_path {
+                    if let Ok(metadata) = std::fs::metadata(path) {
+                        pack_size = metadata.len();
+                    }
+                }
+            }
 
             // Get solid compression flag
             let result = ((*(*archive).vtable).get_archive_property)(
@@ -574,7 +596,8 @@ impl<'a> BitArchiveReader<'a> {
             );
 
             if result == 0 {
-                Ok(propvariant_to_u32(&prop))
+                let count = propvariant_to_u32(&prop);
+                if count == 0 { Ok(1) } else { Ok(count) }
             } else {
                 Ok(1)
             }

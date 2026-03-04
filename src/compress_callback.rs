@@ -399,6 +399,12 @@ impl UpdateCallback {
         }
     }
 
+    pub unsafe fn add_ref_for_callee(callback_ptr: *mut UpdateCallback) {
+        let ref_count = &(*callback_ptr).ref_count;
+        let count = *ref_count.get();
+        *ref_count.get() = count + 1;
+    }
+
     // Helper to get self from IUnknown pointer
     unsafe fn from_unknown(this: *mut IUnknown) -> *mut UpdateCallback {
         // For IUnknown, the vtable is at offset 0, same as UpdateCallback
@@ -772,10 +778,10 @@ impl UpdateCallback {
     unsafe extern "system" fn get_property(
         this: *mut IArchiveUpdateCallback,
         index: u32,
-        prop_id: PROPID,
+        prop_id: u32,
         value: *mut PROPVARIANT,
     ) -> HRESULT {
-        eprintln!("[Callback] GetProperty: index={}, prop_id={:?}", index, prop_id);
+        eprintln!("[Callback] GetProperty: index={}, prop_id={}", index, prop_id);
         
         if value.is_null() {
             return -2147467261; // E_POINTER
@@ -798,11 +804,11 @@ impl UpdateCallback {
         (*value).data = [0; 16];
 
         match prop_id {
-            PROPID::IsAnti => {
+            id if id == PROPID::IsAnti as u32 => {
                 (*value).vt = 11; // VT_BOOL
                 (*value).data[0] = 0; // false
             }
-            PROPID::Path => {
+            id if id == PROPID::Path as u32 => {
                 let path_str = if let Some(ref name) = item.name_in_archive {
                     name.clone()
                 } else {
@@ -822,14 +828,14 @@ impl UpdateCallback {
                 let data_ptr = (*value).data.as_mut_ptr() as *mut *mut u16;
                 std::ptr::write_unaligned(data_ptr, bstr);
             }
-            PROPID::IsDir => {
+            id if id == PROPID::IsDir as u32 => {
                 let is_dir = item.path.is_dir();
                 (*value).vt = 11; // VT_BOOL
                 let bool_val: i16 = if is_dir { -1 } else { 0 };
                 (*value).data[0] = (bool_val & 0xFF) as u8;
                 (*value).data[1] = ((bool_val >> 8) & 0xFF) as u8;
             }
-            PROPID::Size => {
+            id if id == PROPID::Size as u32 => {
                 if !item.path.is_dir() {
                     if let Ok(metadata) = std::fs::metadata(&item.path) {
                         let size = metadata.len();
@@ -840,7 +846,7 @@ impl UpdateCallback {
                     }
                 }
             }
-            PROPID::Attrib => {
+            id if id == PROPID::Attrib as u32 => {
                 (*value).vt = 19; // VT_UI4
                 // FILE_ATTRIBUTE_NORMAL for regular files.
                 // Some handlers (notably ZIP on p7zip) may skip items when

@@ -6,7 +6,8 @@
 //! - HRESULT constants
 //! - FFI conversion utilities
 
-#![allow(non_upper_case_globals)] // vtable crate uses lowercase field names like 'base'
+#![allow(non_upper_case_globals)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use vtable::*;
 use std::ffi::c_void;
@@ -41,6 +42,7 @@ pub type HRESULT = i32;
 ///
 /// All COM objects must implement this trait.
 #[vtable]
+// #[repr(C)]
 pub struct IUnknownVTable {
     /// Queries the object for a specific interface
     query_interface: fn(VRef<IUnknownVTable>, &crate::ffi::GUID) -> *mut c_void,
@@ -54,6 +56,7 @@ pub struct IUnknownVTable {
 
 /// ISequentialInStream interface trait
 #[vtable]
+// #[repr(C)]
 pub struct ISequentialInStreamVTable {
     /// Base IUnknown interface
     base: IUnknownVTable,
@@ -63,6 +66,7 @@ pub struct ISequentialInStreamVTable {
 
 /// IInStream interface trait (extends ISequentialInStream)
 #[vtable]
+// #[repr(C)]
 pub struct IInStreamVTable {
     /// Base ISequentialInStream interface
     base: ISequentialInStreamVTable,
@@ -72,6 +76,7 @@ pub struct IInStreamVTable {
 
 /// ISequentialOutStream interface trait
 #[vtable]
+// #[repr(C)]
 pub struct ISequentialOutStreamVTable {
     /// Base IUnknown interface
     base: IUnknownVTable,
@@ -81,6 +86,7 @@ pub struct ISequentialOutStreamVTable {
 
 /// IOutStream interface trait (extends ISequentialOutStream)
 #[vtable]
+// #[repr(C)]
 pub struct IOutStreamVTable {
     /// Base ISequentialOutStream interface
     base: ISequentialOutStreamVTable,
@@ -92,6 +98,7 @@ pub struct IOutStreamVTable {
 
 /// IProgress interface trait
 #[vtable]
+// #[repr(C)]
 pub struct IProgressVTable {
     /// Base IUnknown interface
     base: IUnknownVTable,
@@ -103,6 +110,7 @@ pub struct IProgressVTable {
 
 /// IArchiveOpenCallback interface trait
 #[vtable]
+// #[repr(C)]
 pub struct IArchiveOpenCallbackVTable {
     /// Base IUnknown interface
     base: IUnknownVTable,
@@ -114,6 +122,7 @@ pub struct IArchiveOpenCallbackVTable {
 
 /// IArchiveOpenVolumeCallback interface trait
 #[vtable]
+// #[repr(C)]
 pub struct IArchiveOpenVolumeCallbackVTable {
     /// Base IUnknown interface
     base: IUnknownVTable,
@@ -125,6 +134,7 @@ pub struct IArchiveOpenVolumeCallbackVTable {
 
 /// ICryptoGetTextPassword interface trait
 #[vtable]
+// #[repr(C)]
 pub struct ICryptoGetTextPasswordVTable {
     /// Base IUnknown interface
     base: IUnknownVTable,
@@ -134,6 +144,7 @@ pub struct ICryptoGetTextPasswordVTable {
 
 /// IArchiveExtractCallback interface trait
 #[vtable]
+// #[repr(C)]
 pub struct IArchiveExtractCallbackVTable {
     /// Base IProgress interface
     base: IProgressVTable,
@@ -147,6 +158,7 @@ pub struct IArchiveExtractCallbackVTable {
 
 /// IArchiveUpdateCallback interface trait
 #[vtable]
+// #[repr(C)]
 pub struct IArchiveUpdateCallbackVTable {
     /// Base IProgress interface
     base: IProgressVTable,
@@ -162,6 +174,7 @@ pub struct IArchiveUpdateCallbackVTable {
 
 /// ICompressProgressInfo interface trait
 #[vtable]
+// #[repr(C)]
 pub struct ICompressProgressInfoVTable {
     /// Base IUnknown interface
     base: IUnknownVTable,

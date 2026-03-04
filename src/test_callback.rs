@@ -175,7 +175,7 @@ impl SimpleUpdateCallback {
     unsafe extern "system" fn get_property(
         this: *mut IArchiveUpdateCallback,
         index: u32,
-        prop_id: PROPID,
+        prop_id: u32,
         value: *mut PROPVARIANT,
     ) -> HRESULT {
         if value.is_null() {
@@ -199,11 +199,11 @@ impl SimpleUpdateCallback {
         (*value).data = [0; 16];
         
         match prop_id {
-            PROPID::IsAnti => {
+            id if id == PROPID::IsAnti as u32 => {
                 (*value).vt = 11; // VT_BOOL
                 (*value).data[0] = 0;
             }
-            PROPID::Path => {
+            id if id == PROPID::Path as u32 => {
                 let path_str = if let Some(ref name) = item.name_in_archive {
                     name.clone()
                 } else {
@@ -222,13 +222,13 @@ impl SimpleUpdateCallback {
                 let data_ptr = (*value).data.as_mut_ptr() as *mut *mut u16;
                 std::ptr::write_unaligned(data_ptr, bstr);
             }
-            PROPID::IsDir => {
+            id if id == PROPID::IsDir as u32 => {
                 let is_dir = item.path.is_dir();
                 (*value).vt = 11;
                 (*value).data[0] = if is_dir { 0xFF } else { 0 };
                 (*value).data[1] = if is_dir { 0xFF } else { 0 };
             }
-            PROPID::Size => {
+            id if id == PROPID::Size as u32 => {
                 if !item.path.is_dir() {
                     if let Ok(metadata) = std::fs::metadata(&item.path) {
                         let size = metadata.len();

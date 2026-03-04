@@ -242,7 +242,7 @@ pub struct IArchiveExtractCallbackVTable {
         this: *mut IArchiveExtractCallback,
         index: u32,
         out_stream: *mut *mut ISequentialOutStream,
-        ask_extract_mode: *mut i32,
+        ask_extract_mode: i32,
     ) -> HRESULT,
     pub prepare_operation: unsafe extern "system" fn(
         this: *mut IArchiveExtractCallback,
@@ -273,7 +273,7 @@ pub struct IArchiveUpdateCallbackVTable {
     pub get_property: unsafe extern "system" fn(
         this: *mut IArchiveUpdateCallback,
         index: u32,
-        prop_id: PROPID,
+        prop_id: u32,
         value: *mut PROPVARIANT,
     ) -> HRESULT,
     pub get_stream: unsafe extern "system" fn(

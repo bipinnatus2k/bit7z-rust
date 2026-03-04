@@ -35,6 +35,43 @@ pub struct BitCompressor<'a> {
 }
 
 impl<'a> BitCompressor<'a> {
+    fn common_root<P: AsRef<Path>>(input_paths: &[P]) -> Option<std::path::PathBuf> {
+        if input_paths.is_empty() {
+            return None;
+        }
+
+        let first = input_paths[0].as_ref();
+        let mut root = first.parent()?.to_path_buf();
+
+        for path in input_paths {
+            let path = path.as_ref();
+            while !path.starts_with(&root) {
+                if !root.pop() {
+                    return None;
+                }
+            }
+        }
+
+        Some(root)
+    }
+
+    fn build_input_items<P: AsRef<Path>>(&self, input_paths: &[P]) -> Vec<InputItem> {
+        let root = Self::common_root(input_paths);
+        input_paths
+            .iter()
+            .map(|path| {
+                let path = path.as_ref();
+                if let Some(ref root) = root {
+                    if let Ok(relative) = path.strip_prefix(root) {
+                        let name = relative.to_string_lossy().replace('\\', "/");
+                        return InputItem::with_name(path, name);
+                    }
+                }
+                InputItem::new(path)
+            })
+            .collect()
+    }
+
     /// Create a new compressor
     pub fn new(library: &'a BitLibrary, format: CompressionFormat) -> Self {
         BitCompressor {
@@ -332,10 +369,7 @@ impl<'a> BitCompressor<'a> {
         // Build input items
         eprintln!("[compress] Building {} input items", input_paths.len());
         let _ = std::io::stderr().flush();
-        let input_items: Vec<InputItem> = input_paths
-            .iter()
-            .map(|p| InputItem::new(p.as_ref()))
-            .collect();
+        let input_items = self.build_input_items(input_paths);
 
         // Create output file stream
         eprintln!("[compress] Creating output stream: {:?}", output_path.as_ref());
@@ -368,10 +402,7 @@ impl<'a> BitCompressor<'a> {
         }
 
         // Build input items
-        let input_items: Vec<InputItem> = input_paths
-            .iter()
-            .map(|p| InputItem::new(p.as_ref()))
-            .collect();
+        let input_items = self.build_input_items(input_paths);
 
         // Create a temporary file for output
         
@@ -549,6 +580,7 @@ impl<'a> BitCompressor<'a> {
             let callback_iface_ptr = (*callback_ptr).as_i_archive_update_callback();
             eprintln!("[DEBUG] callback_ptr={:p}, callback_iface_ptr={:p}", callback_ptr, callback_iface_ptr);
             let _ = std::io::stderr().flush();
+            UpdateCallback::add_ref_for_callee(callback_ptr);
             let result = (archive_vtable.update_items)(
                 archive,
                 out_stream_ptr,
@@ -563,6 +595,7 @@ impl<'a> BitCompressor<'a> {
             eprintln!("[DEBUG] Releasing caller reference");
             UpdateCallback::release_caller_reference(callback_ptr);
             eprintln!("[DEBUG] Done");
+            let _ = (archive_vtable.base.release)(archive as *mut IUnknown);
 
             // Match bit7z behavior: UpdateItems must return S_OK.
             if result != 0 {

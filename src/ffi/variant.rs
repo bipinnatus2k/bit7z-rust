@@ -5,6 +5,13 @@
 
 use crate::error::Result;
 
+#[cfg(target_os = "windows")]
+#[link(name = "oleaut32")]
+extern "system" {
+    fn SysAllocStringLen(psz: *const u16, len: u32) -> *mut u16;
+    fn SysFreeString(bstr: *mut u16);
+}
+
 /// Variant type enumeration
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -439,6 +446,16 @@ pub unsafe fn propvariant_to_i64(prop: &PROPVARIANT) -> i64 {
 
 /// Allocate a BSTR from a UTF-16 slice (without null terminator)
 /// BSTR layout: [4-byte byte-length][string data][null terminator]
+#[cfg(target_os = "windows")]
+pub fn alloc_bstr(s: &[u16]) -> *mut u16 {
+    if s.is_empty() {
+        return std::ptr::null_mut();
+    }
+
+    unsafe { SysAllocStringLen(s.as_ptr(), s.len() as u32) }
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn alloc_bstr(s: &[u16]) -> *mut u16 {
     use std::alloc::{alloc, Layout};
 
@@ -447,8 +464,6 @@ pub fn alloc_bstr(s: &[u16]) -> *mut u16 {
     }
 
     let byte_len = s.len() * 2;
-
-    // Allocate memory: 4 bytes for length + string data + 2 bytes for null terminator
     let total_size = 4 + byte_len + 2;
     let layout = Layout::from_size_align(total_size, 2).unwrap();
 
@@ -458,18 +473,14 @@ pub fn alloc_bstr(s: &[u16]) -> *mut u16 {
             return std::ptr::null_mut();
         }
 
-        // Write byte length (4 bytes before string data)
         let len_ptr = ptr as *mut u32;
         len_ptr.write_unaligned(byte_len as u32);
 
-        // Copy string data
         let str_ptr = ptr.add(4);
         std::ptr::copy_nonoverlapping(s.as_ptr(), str_ptr as *mut u16, s.len());
 
-        // Write null terminator using write_unaligned for safety
         std::ptr::write_unaligned(str_ptr.add(s.len()) as *mut u16, 0);
 
-        // Return pointer to string data (after length prefix)
         str_ptr as *mut u16
     }
 }
@@ -477,20 +488,23 @@ pub fn alloc_bstr(s: &[u16]) -> *mut u16 {
 /// Allocate a BSTR from a UTF-32 string (for Linux 7-Zip)
 /// Converts UTF-32 to UTF-16 then allocates BSTR
 /// BSTR layout: [4-byte byte-length][string data (UTF-16)][null terminator]
+#[cfg(target_os = "windows")]
+pub fn alloc_bstr_from_utf32(s: &str) -> *mut u16 {
+    let utf16: Vec<u16> = s.encode_utf16().collect();
+    alloc_bstr(&utf16)
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn alloc_bstr_from_utf32(s: &str) -> *mut u16 {
     use std::alloc::{alloc, Layout};
-    
-    // Convert Rust str to UTF-16
+
     let utf16: Vec<u16> = s.encode_utf16().collect();
-    
+
     if utf16.is_empty() {
         return std::ptr::null_mut();
     }
 
     let byte_len = utf16.len() * 2;
-
-    // Allocate memory: 4 bytes for length + string data + 2 bytes for null terminator
-    // Use 4-byte alignment for the length prefix
     let total_size = 4 + byte_len + 2;
     let layout = Layout::from_size_align(total_size, 4).unwrap();
 
@@ -500,38 +514,41 @@ pub fn alloc_bstr_from_utf32(s: &str) -> *mut u16 {
             return std::ptr::null_mut();
         }
 
-        // Write byte length (4 bytes before string data)
         let len_ptr = ptr as *mut u32;
         len_ptr.write_unaligned(byte_len as u32);
 
-        // Copy string data
         let str_ptr = ptr.add(4);
         std::ptr::copy_nonoverlapping(utf16.as_ptr(), str_ptr as *mut u16, utf16.len());
 
-        // Write null terminator (use write_unaligned for safety)
         let null_ptr = str_ptr.add(utf16.len()) as *mut u16;
         null_ptr.write_unaligned(0);
 
-        // Return pointer to string data (after length prefix)
         str_ptr as *mut u16
     }
 }
 
 /// Free a BSTR allocated by alloc_bstr
+#[cfg(target_os = "windows")]
 pub unsafe fn free_bstr(bstr: *mut u16) {
-    use std::alloc::{dealloc, Layout};
-    
     if bstr.is_null() {
         return;
     }
-    
-    // Get the pointer to the start of the allocation (4 bytes before the string data)
+
+    SysFreeString(bstr);
+}
+
+#[cfg(not(target_os = "windows"))]
+pub unsafe fn free_bstr(bstr: *mut u16) {
+    use std::alloc::{dealloc, Layout};
+
+    if bstr.is_null() {
+        return;
+    }
+
     let ptr = (bstr as *mut u8).sub(4);
-    
-    // Read the byte length to calculate total size
     let byte_len = ptr.read_unaligned();
     let total_size = 4 + byte_len as usize + 2;
-    
+
     let layout = Layout::from_size_align(total_size, 4).unwrap();
     dealloc(ptr, layout);
 }

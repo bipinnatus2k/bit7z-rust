@@ -76,7 +76,7 @@ impl<'a> BitExtractor<'a> {
                 (*open_callback_ptr).as_i_archive_open_callback(),
             );
 
-            if open_result != 0 {
+            if open_result != 0 && open_result != 1 {
                 // Clean up on failure
                 let _ = Box::from_raw(in_stream_ptr);
                 let _ = Box::from_raw(open_callback_ptr);
@@ -231,7 +231,7 @@ impl<'a> BitExtractor<'a> {
                 open_callback.as_i_archive_open_callback(),
             );
 
-            if open_result != 0 {
+            if open_result != 0 && open_result != 1 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", open_result
                 )));
@@ -338,7 +338,10 @@ impl<'a> BitExtractor<'a> {
         let items = reader.items()?;
         let matching_indices: Vec<u32> = items
             .iter()
-            .filter(|item| regex.is_match(&item.path))
+            .filter(|item| {
+                let normalized = item.path.replace('\\', "/");
+                regex.is_match(&normalized)
+            })
             .map(|item| item.index)
             .collect();
         
@@ -412,40 +415,26 @@ impl<'a> BitExtractor<'a> {
                 open_callback.as_i_archive_open_callback(),
             );
 
-            if open_result != 0 {
+            if open_result != 0 && open_result != 1 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", open_result
                 )));
             }
 
-            // Get number of items
-            let mut num_items: u32 = 0;
-            ((*(*archive_ptr.as_ptr()).vtable).get_number_of_items)(
-                archive_ptr.as_ptr(),
-                &mut num_items,
-            );
-
-            // Create a null output stream for testing (we don't want to extract)
-            // Using kExtractMode::Test (2) - test archive integrity
-            let callback = Box::leak(Box::new(ExtractCallback::new(
-                Path::new("/dev/null"), // Dummy path - won't be used for test mode
+            let callback = Box::leak(Box::new(ExtractCallback::for_test(
                 self.password.clone(),
                 archive_ptr.as_ptr(),
             )));
 
-            // Call Extract with kExtractMode::Test (2)
-            // This tests the archive without actually extracting files
-            let _extract_mode: i32 = 2; // kExtractMode::Test
-            let mut indices: [i32; 1] = [-1]; // -1 means all items
-            let indices_ptr = indices.as_mut_ptr() as *mut u32;
-
             let result = ((*(*archive_ptr.as_ptr()).vtable).extract)(
                 archive_ptr.as_ptr(),
-                indices_ptr,
-                num_items,
-                0, // test_all = 0 when indices is -1
+                ptr::null_mut(),
+                0xFFFFFFFF,
+                1,
                 callback as *mut ExtractCallback as *mut IArchiveExtractCallback,
             );
+
+            let _ = ((*(*archive_ptr.as_ptr()).vtable).close)(archive_ptr.as_ptr());
 
             if result != 0 {
                 return Err(Bit7zError::ArchiveIntegrityCheckFailed(format!(
@@ -480,7 +469,7 @@ impl<'a> BitExtractor<'a> {
             );
 
             // Match bit7z: only S_OK is success for open().
-            if open_result != 0 {
+            if open_result != 0 && open_result != 1 {
                 return Err(Bit7zError::OpenFailed(format!(
                     "Failed to open archive: HRESULT 0x{:08X}", open_result
                 )));
@@ -605,29 +594,22 @@ impl<'a> BitExtractor<'a> {
             Bit7zError::Io(e)
         })?;
 
-        // For paths that contain directory components (like "test_debug/test.txt"),
-        // we only use the file name to avoid creating nested directories
-        // This matches the behavior of most archive extractors
-        
-        // For single-file formats (GZip/BZip2/XZ), the path may be empty
-        // In this case, we use a default file name based on the output directory
-        let file_name = path.file_name()
-            .and_then(|name| name.to_str())
-            .filter(|s| !s.is_empty());
-        
-        let output_file_name = match file_name {
-            Some(name) => name.to_string(),
-            None => {
-                // Use the output directory name as the file name for single-file formats
-                output_dir.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("extracted_file")
-                    .to_string()
-            }
+        let relative_path = if path.as_os_str().is_empty() {
+            let fallback = output_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("extracted_file");
+            PathBuf::from(fallback)
+        } else if path.is_absolute() {
+            path.file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("extracted_file"))
+        } else {
+            path.to_path_buf()
         };
 
-        // Build the full output path using the file name
-        let full_path = output_canonical.join(&output_file_name);
+        // Build the full output path using the relative path
+        let full_path = output_canonical.join(&relative_path);
 
         // For the full path, we need to ensure parent directories exist
         if let Some(parent) = full_path.parent() {
@@ -755,6 +737,7 @@ struct ExtractCallback {
     current_path: UnsafeCell<Option<String>>,
     // For buffer extraction
     buffer_stream: Option<*mut crate::stream::BufferOutStream>,
+    test_mode: bool,
 }
 
 impl ExtractCallback {
@@ -821,6 +804,7 @@ impl ExtractCallback {
             current_out_stream: UnsafeCell::new(None),
             current_path: UnsafeCell::new(None),
             buffer_stream: None,
+            test_mode: false,
         }
     }
 
@@ -892,6 +876,74 @@ impl ExtractCallback {
             current_out_stream: UnsafeCell::new(None),
             current_path: UnsafeCell::new(None),
             buffer_stream: Some(buffer_stream),
+            test_mode: false,
+        }
+    }
+
+    fn for_test(password: Option<String>, archive: *mut IInArchive) -> Self {
+        let vtable = Box::pin(IArchiveExtractCallbackVTable {
+            base: crate::ffi::IProgressVTable {
+                base: crate::ffi::IUnknownVTable {
+                    query_interface: Self::query_interface,
+                    add_ref: Self::add_ref,
+                    release: Self::release,
+                },
+                set_completed: Self::set_completed,
+                set_total: Self::set_total,
+            },
+            get_stream: Self::get_stream,
+            prepare_operation: Self::prepare_operation,
+            set_operation_result: Self::set_operation_result,
+        });
+
+        let compress_progress_vtable = Box::pin(ICompressProgressInfoVTable {
+            base: crate::ffi::IUnknownVTable {
+                query_interface: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                >(Self::compress_progress_query_interface) },
+                add_ref: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::compress_progress_add_ref) },
+                release: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICompressProgressInfo) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::compress_progress_release) },
+            },
+            set_ratio_info: Self::set_ratio_info,
+        });
+
+        let crypto_password_vtable = Box::pin(ICryptoGetTextPasswordVTable {
+            base: crate::ffi::IUnknownVTable {
+                query_interface: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown, *const crate::ffi::GUID, *mut *mut c_void) -> HRESULT,
+                >(Self::crypto_password_query_interface) },
+                add_ref: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::crypto_password_add_ref) },
+                release: unsafe { std::mem::transmute::<
+                    unsafe extern "system" fn(*mut ICryptoGetTextPassword) -> u32,
+                    unsafe extern "system" fn(*mut crate::ffi::IUnknown) -> u32,
+                >(Self::crypto_password_release) },
+            },
+            crypto_get_text_password: Self::get_text_password,
+        });
+
+        ExtractCallback {
+            vtable,
+            compress_progress_vtable,
+            crypto_password_vtable,
+            ref_count: UnsafeCell::new(1),
+            output_dir: PathBuf::new(),
+            password,
+            archive,
+            current_out_stream: UnsafeCell::new(None),
+            current_path: UnsafeCell::new(None),
+            buffer_stream: None,
+            test_mode: true,
         }
     }
 
@@ -1100,20 +1152,18 @@ impl ExtractCallback {
         this: *mut IArchiveExtractCallback,
         index: u32,
         out_stream: *mut *mut ISequentialOutStream,
-        ask_extract_mode: *mut i32,
+        ask_extract_mode: i32,
     ) -> HRESULT {
         if out_stream.is_null() {
             return -2147467261; // E_POINTER
         }
 
-        *out_stream = ptr::null_mut();
-        
-        // ask_extract_mode may be NULL for some formats
-        if !ask_extract_mode.is_null() {
-            *ask_extract_mode = 0; // kExtract = 0
-        }
-
         let callback = &*(this as *const ExtractCallback);
+        *out_stream = ptr::null_mut();
+
+        if callback.test_mode || ask_extract_mode != 0 {
+            return 0;
+        }
         let archive_vtable = unsafe { &*(*callback.archive).vtable };
 
         // Get item path
@@ -1201,7 +1251,7 @@ impl ExtractCallback {
         this: *mut IArchiveExtractCallback,
         _index: u32,
         out_stream: *mut *mut ISequentialOutStream,
-        ask_extract_mode: *mut i32,
+        ask_extract_mode: i32,
     ) -> HRESULT {
         if out_stream.is_null() {
             return -2147467261; // E_POINTER
@@ -1209,14 +1259,12 @@ impl ExtractCallback {
 
         *out_stream = ptr::null_mut();
 
-        // ask_extract_mode may be NULL for some formats
-        if !ask_extract_mode.is_null() {
-            *ask_extract_mode = 0; // kExtract = 0
-        }
-
         let callback = &*(this as *const ExtractCallback);
 
         // Use buffer stream if available
+        if callback.test_mode || ask_extract_mode != 0 {
+            return 0;
+        }
         if let Some(buffer_stream) = callback.buffer_stream {
             *out_stream = (*buffer_stream).as_i_out_stream() as *mut ISequentialOutStream;
             

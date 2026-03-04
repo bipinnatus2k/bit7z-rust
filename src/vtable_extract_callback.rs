@@ -14,6 +14,7 @@ use crate::ffi::{
     IID_ICompressProgressInfo, IID_ICryptoGetTextPassword,
 };
 use crate::stream::FileStreamWrite;
+use crate::ffi::variant::alloc_bstr;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -37,7 +38,7 @@ struct ExtractCallbackVTable {
     set_total: fn(VRef<ExtractCallbackVTable>, u64) -> HRESULT,
 
     // IArchiveExtractCallback methods
-    get_stream: fn(VRef<ExtractCallbackVTable>, u32, *mut *mut ISequentialOutStream, *mut i32) -> HRESULT,
+    get_stream: fn(VRef<ExtractCallbackVTable>, u32, *mut *mut ISequentialOutStream, i32) -> HRESULT,
     prepare_operation: fn(VRef<ExtractCallbackVTable>, i32) -> HRESULT,
     set_operation_result: fn(VRef<ExtractCallbackVTable>, i32) -> HRESULT,
 
@@ -203,7 +204,7 @@ impl ExtractCallback for VTableExtractCallback {
         &self,
         index: u32,
         out_stream: *mut *mut ISequentialOutStream,
-        ask_extract_mode: *mut i32,
+        ask_extract_mode: i32,
     ) -> HRESULT {
         if out_stream.is_null() {
             return E_POINTER;
@@ -212,9 +213,8 @@ impl ExtractCallback for VTableExtractCallback {
         unsafe {
             *out_stream = ptr::null_mut();
 
-            // ask_extract_mode: 0 = kExtract, 1 = kTest, 2 = kSkip
-            if !ask_extract_mode.is_null() {
-                *ask_extract_mode = 0; // kExtract
+            if ask_extract_mode != 0 {
+                return S_OK;
             }
 
             // Get item path
@@ -312,37 +312,3 @@ impl ExtractCallback for VTableExtractCallback {
 
 ExtractCallbackVTable_static!(static EXTRACT_CALLBACK_VT for VTableExtractCallback);
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Allocate BSTR from UTF-16 slice
-fn alloc_bstr(utf16: &[u16]) -> *mut u16 {
-    use std::alloc::{alloc, Layout};
-    use std::ptr;
-
-    if utf16.is_empty() {
-        return ptr::null_mut();
-    }
-
-    // BSTR layout: [4 bytes length][data][2 bytes null terminator]
-    let len = utf16.len();
-    let total_bytes = 4 + len * 2 + 2;
-    let layout = Layout::from_size_align(total_bytes, 4).unwrap();
-
-    unsafe {
-        let ptr = alloc(layout);
-        if ptr.is_null() {
-            return ptr::null_mut();
-        }
-
-        // Write length
-        *(ptr as *mut u32) = (len * 2) as u32;
-        // Write data
-        ptr::copy_nonoverlapping(utf16.as_ptr(), ptr.add(4) as *mut u16, len);
-        // Write null terminator
-        *(ptr.add(4 + len * 2) as *mut u16) = 0;
-
-        ptr.add(4) as *mut u16
-    }
-}

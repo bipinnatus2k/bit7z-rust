@@ -9,6 +9,7 @@ use crate::ffi::{
 use libloading::{Library, Symbol};
 use std::ffi::c_void;
 use std::path::Path;
+use std::path::PathBuf;
 use std::ptr::NonNull;
 
 #[cfg(target_os = "windows")]
@@ -22,6 +23,50 @@ pub const DEFAULT_LIBRARY: &str = "7z.dylib";
 
 #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 pub const DEFAULT_LIBRARY: &str = "7z.so";
+
+fn resolve_library_path<P: AsRef<Path>>(path: Option<P>) -> PathBuf {
+    if let Some(path) = path {
+        return path.as_ref().to_path_buf();
+    }
+
+    if let Ok(path) = std::env::var("BIT7Z_LIBRARY_PATH") {
+        return PathBuf::from(path);
+    }
+
+    let candidates: &[&str] = if cfg!(target_os = "windows") {
+        &[
+            "C:\\Program Files\\7-Zip\\7z.dll",
+            "C:\\Program Files (x86)\\7-Zip\\7z.dll",
+            "C:\\7-Zip\\7z.dll",
+        ]
+    } else if cfg!(target_os = "macos") {
+        &[
+            "/opt/homebrew/lib/7z.dylib",
+            "/usr/local/lib/7z.dylib",
+            "/usr/lib/7z.dylib",
+            "/opt/homebrew/lib/7zip/7z.dylib",
+            "/usr/local/lib/7zip/7z.dylib",
+        ]
+    } else {
+        &[
+            "/usr/lib/7zip/7z.so",
+            "/usr/lib/x86_64-linux-gnu/7zip/7z.so",
+            "/usr/local/lib/7zip/7z.so",
+            "/opt/7zip/7z.so",
+            "/usr/lib/7z.so",
+            "/usr/local/lib/7z.so",
+        ]
+    };
+
+    for candidate in candidates {
+        let path = Path::new(candidate);
+        if path.exists() {
+            return path.to_path_buf();
+        }
+    }
+
+    Path::new(DEFAULT_LIBRARY).to_path_buf()
+}
 
 // Function pointer types
 type CreateObjectFunc = unsafe extern "system" fn(
@@ -57,9 +102,7 @@ pub struct BitLibrary {
 impl BitLibrary {
     /// Load 7-Zip library from specified path or default location
     pub fn new<P: AsRef<Path>>(path: Option<P>) -> Result<Self, LibraryError> {
-        let lib_path = path
-            .map(|p| p.as_ref().to_path_buf())
-            .unwrap_or_else(|| Path::new(DEFAULT_LIBRARY).to_path_buf());
+        let lib_path = resolve_library_path(path);
 
         let library = Box::new(unsafe { Library::new(&lib_path)? });
 
